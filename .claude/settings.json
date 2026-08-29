@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:floci.io)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(docker --version)",
+      "Bash(docker compose *)",
+      "Bash(aws --version)",
+      "Bash(docker info *)",
+      "Bash(chmod +x infra/local/verify.sh infra/local/bootstrap.sh run.sh)",
+      "Bash(bash -n infra/local/bootstrap.sh)",
+      "Bash(bash -n infra/local/verify.sh)",
+      "Bash(ls /Applications | grep -i -E 'docker|orbstack|rancher|podman' ; ls ~/Applications 2>/dev/null | grep -i -E 'docker|orbstack')",
+      "Read(//Applications/**)",
+      "Read(//Users/danielbfr3/Applications/**)",
+      "Bash(open -a Docker)",
+      "Bash(sed -i '' 's|^FROM golang:1.23-bookworm AS build|FROM golang:1.25-bookworm AS build|' examples/multilinguagem/go/Dockerfile)",
+      "Bash(sed -i '' 's|^go 1.23$|go 1.24|' examples/multilinguagem/go/go.mod)"
+    ]
+  }
+}

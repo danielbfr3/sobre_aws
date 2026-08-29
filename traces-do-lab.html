@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traços de uma Cobrança</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg:            #f4f6f8;
+    --surface:       #ffffff;
+    --surface-2:     #eef1f5;
+    --ink:           #11151b;
+    --ink-2:         #4b5462;
+    --ink-3:         #79828f;
+    --rule:          #dde2e9;
+    --rule-strong:   #c3cad4;
+    --accent:        #2a78d6;
+    --s-python:      #2a78d6;
+    --s-go:          #eb6834;
+    --s-dotnet:      #1baf7a;
+    --danger:        #c22f2a;
+    --danger-soft:   #fbeceb;
+    --band-origem:   #eaf1fb;
+    --band-destino:  #fdf0ea;
+    --on-accent:     #ffffff;
+    --on-danger:     #ffffff;
+
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg:          #0e1116;
+      --surface:     #171b21;
+      --surface-2:   #1f242c;
+      --ink:         #eef1f5;
+      --ink-2:       #a7b0bd;
+      --ink-3:       #6e7784;
+      --rule:        #262d37;
+      --rule-strong: #38414d;
+      --accent:      #3987e5;
+      --s-python:    #3987e5;
+      --s-go:        #d95926;
+      --s-dotnet:    #199e70;
+      --danger:      #e66767;
+      --danger-soft: #2b1a1a;
+      --band-origem: #16202e;
+      --band-destino:#2a1d16;
+      --on-accent:   #0b1220;
+      --on-danger:   #0b1220;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:          #0e1116;
+    --surface:     #171b21;
+    --surface-2:   #1f242c;
+    --ink:         #eef1f5;
+    --ink-2:       #a7b0bd;
+    --ink-3:       #6e7784;
+    --rule:        #262d37;
+    --rule-strong: #38414d;
+    --accent:      #3987e5;
+    --s-python:    #3987e5;
+    --s-go:        #d95926;
+    --s-dotnet:    #199e70;
+    --danger:      #e66767;
+    --danger-soft: #2b1a1a;
+    --band-origem: #16202e;
+    --band-destino:#2a1d16;
+    --on-accent:   #0b1220;
+    --on-danger:   #0b1220;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 16.5px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  .prose { max-width: 68ch; }
+
+  /* ---------- header ---------- */
+  header.masthead {
+    padding: 72px 0 40px;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-family: var(--font-mono);
+    font-size: clamp(30px, 5vw, 46px);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.08;
+    text-wrap: balance;
+    margin: 0 0 20px;
+  }
+  .standfirst {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 60ch;
+    margin: 0 0 32px;
+  }
+
+  .runmeta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .runmeta div {
+    flex: 1 1 128px;
+    padding: 13px 16px;
+    border-right: 1px solid var(--rule);
+  }
+  .runmeta div:last-child { border-right: 0; }
+  .runmeta dt {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 5px;
+  }
+  .runmeta dd {
+    font-family: var(--font-mono);
+    font-size: 19px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  /* ---------- sections ---------- */
+  section { margin: 0 0 64px; }
+  h2 {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .sec-head { margin-bottom: 26px; }
+  .sec-head .eyebrow { margin-bottom: 10px; }
+  p { margin: 0 0 17px; }
+  .prose p:last-child { margin-bottom: 0; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    background: var(--surface-2);
+    padding: 0.12em 0.38em;
+    border-radius: 3px;
+  }
+  strong { font-weight: 650; color: var(--ink); }
+
+  /* ---------- figures ---------- */
+  figure {
+    margin: 26px 0 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 22px 22px 18px;
+  }
+  .figbody { overflow-x: auto; }
+  figure svg { display: block; max-width: 100%; height: auto; }
+  figcaption {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--ink-2);
+  }
+  figcaption b {
+    color: var(--ink);
+    font-weight: 650;
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 3px;
+    vertical-align: 2px;
+    margin-left: 10px;
+    font-weight: 600;
+  }
+  .tag-real   { background: var(--accent); color: var(--on-accent); }
+  .tag-conc   { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--rule-strong); }
+
+  /* ---------- legend ---------- */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-bottom: 16px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 11px; height: 11px; border-radius: 2px; flex: none; }
+
+  /* ---------- table ---------- */
+  .tablewrap { overflow-x: auto; margin-top: 26px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+    background: var(--surface);
+  }
+  th, td {
+    text-align: right;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  .lang-cell { display: inline-flex; align-items: center; gap: 8px; }
+
+  /* ---------- callout ---------- */
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 16px 20px;
+    margin: 24px 0 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 15.5px;
+  }
+  .callout.warn { border-left-color: var(--danger); }
+  .callout p { margin: 0 0 10px; }
+  .callout p:last-child { margin: 0; }
+  .callout-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: block;
+    margin-bottom: 7px;
+  }
+
+  /* ---------- tooltip ---------- */
+  #tip {
+    position: fixed;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .09s ease;
+    background: var(--ink);
+    color: var(--bg);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    padding: 8px 11px;
+    border-radius: 4px;
+    max-width: 260px;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 4px 14px rgba(0,0,0,.22);
+  }
+  #tip.on { opacity: 1; }
+  #tip b { color: var(--bg); font-weight: 700; }
+
+  .mark { cursor: crosshair; }
+  .mark:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 22px;
+    font-size: 13.5px;
+    color: var(--ink-3);
+    font-family: var(--font-mono);
+    line-height: 1.6;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="tip" role="status" aria-live="polite"></div>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Lab AWS IAM · execução de 09 ago 2026, 17:28 UTC</p>
+  <h1>Traços de uma cobrança</h1>
+  <p class="standfirst">
+    Cinco figuras sobre quem chama quem neste lab, qual documento IAM autoriza cada
+    seta, e — nos logs que a execução realmente gravou — quanto tempo cada salto levou.
+  </p>
+  <dl class="runmeta">
+    <div><dt>Traces</dt><dd>32</dd></div>
+    <div><dt>Eventos</dt><dd>168</dd></div>
+    <div><dt>Janela</dt><dd>90,6 s</dd></div>
+    <div><dt>Linguagens</dt><dd>3</dd></div>
+    <div><dt>Na DLQ</dt><dd>1</dd></div>
+  </dl>
+</header>
+
+<!-- ============ 1 ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Figura 1 — topologia</p>
+    <h2>Quem chama quem<span class="tag tag-conc">estrutura</span></h2>
+  </div>
+  <div class="prose">
+    <p>
+      Cada seta é uma chamada de API que o IAM precisa autorizar — e cada uma é
+      decidida por um documento diferente. As duas travessias que não dependem da
+      role de ninguém estão marcadas: a entrega SNS → SQS é decidida pela
+      <em>resource policy</em> da fila, e o roteamento por tipo acontece no broker,
+      pela <code>FilterPolicy</code> da subscription. Nenhum dos três consumers tem
+      código de filtro.
+    </p>
+  </div>
+
+  <figure>
+    <div class="figbody">
+      <svg viewBox="0 0 980 356" role="img" aria-label="Topologia do pipeline: o publisher chama sns:Publish no tópico eventos-cobranca, que distribui por FilterPolicy para três filas SQS (registro, baixa, rejeicao); cada fila é lida por um consumer em linguagem diferente via sqs:ReceiveMessage, e os três gravam no mesmo volume EFS. A fila baixa tem uma DLQ após três falhas.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--danger)"/>
+          </marker>
+        </defs>
+        <g fill="none" stroke="currentColor" stroke-width="1.5" color="var(--ink-3)">
+          <!-- publisher -> sns -->
+          <line x1="140" y1="178" x2="222" y2="178" marker-end="url(#ar)"/>
+          <!-- sns -> queues -->
+          <path d="M 366 178 C 396 178, 396 74, 428 74"   marker-end="url(#ar)"/>
+          <line x1="366" y1="178" x2="428" y2="178"        marker-end="url(#ar)"/>
+          <path d="M 366 178 C 396 178, 396 282, 428 282" marker-end="url(#ar)"/>
+          <!-- queues -> consumers -->
+          <line x1="546" y1="74"  x2="622" y2="74"  marker-end="url(#ar)"/>
+          <line x1="546" y1="178" x2="622" y2="178" marker-end="url(#ar)"/>
+          <line x1="546" y1="282" x2="622" y2="282" marker-end="url(#ar)"/>
+          <!-- consumers -> efs -->
+          <path d="M 782 74  C 818 74, 818 178, 848 178"  marker-end="url(#ar)"/>
+          <line x1="782" y1="178" x2="848" y2="178"        marker-end="url(#ar)"/>
+          <path d="M 782 282 C 818 282, 818 178, 848 178" marker-end="url(#ar)"/>
+        </g>
+        <!-- DLQ -->
+        <g fill="none" stroke="var(--danger)" stroke-width="1.5" stroke-dasharray="4 3">
+          <path d="M 487 204 L 487 246" marker-end="url(#ard)"/>
+        </g>
+
+        <g font-family="ui-monospace, Menlo, monospace">
+          <!-- publisher -->
+          <rect x="16" y="152" width="124" height="52" rx="3" fill="var(--surface-2)" stroke="var(--rule-strong)"/>
+          <text x="78" y="174" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">publisher</text>
+          <text x="78" y="190" text-anchor="middle" font-size="10" fill="var(--ink-3)">sa-publisher</text>
+
+          <!-- sns -->
+          <rect x="222" y="152" width="144" height="52" rx="3" fill="var(--surface-2)" stroke="var(--rule-strong)"/>
+          <text x="294" y="174" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">SNS</text>
+          <text x="294" y="190" text-anchor="middle" font-size="10" fill="var(--ink-3)">eventos-cobranca</text>
+
+          <!-- queues -->
+          <rect x="428" y="52" width="118" height="44" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="487" y="70" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">SQS</text>
+          <text x="487" y="85" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">registro</text>
+
+          <rect x="428" y="156" width="118" height="44" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="487" y="174" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">SQS</text>
+          <text x="487" y="189" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">baixa</text>
+
+          <rect x="428" y="260" width="118" height="44" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="487" y="278" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">SQS</text>
+          <text x="487" y="293" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">rejeicao</text>
+
+          <!-- consumers -->
+          <rect x="622" y="52" width="160" height="44" rx="3" fill="var(--surface-2)" stroke="var(--s-python)" stroke-width="1.5"/>
+          <text x="702" y="70" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">consumer registro</text>
+          <text x="702" y="85" text-anchor="middle" font-size="10" fill="var(--ink-3)">python</text>
+
+          <rect x="622" y="156" width="160" height="44" rx="3" fill="var(--surface-2)" stroke="var(--s-go)" stroke-width="1.5"/>
+          <text x="702" y="174" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">consumer baixa</text>
+          <text x="702" y="189" text-anchor="middle" font-size="10" fill="var(--ink-3)">go</text>
+
+          <rect x="622" y="260" width="160" height="44" rx="3" fill="var(--surface-2)" stroke="var(--s-dotnet)" stroke-width="1.5"/>
+          <text x="702" y="278" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">consumer rejeicao</text>
+          <text x="702" y="293" text-anchor="middle" font-size="10" fill="var(--ink-3)">dotnet</text>
+
+          <!-- efs -->
+          <rect x="848" y="152" width="116" height="52" rx="3" fill="var(--surface-2)" stroke="var(--rule-strong)"/>
+          <text x="906" y="173" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">PVC EFS</text>
+          <text x="906" y="189" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">/data/comprovantes</text>
+
+          <!-- DLQ -->
+          <rect x="428" y="246" width="118" height="0" fill="none"/>
+          <text x="497" y="232" font-size="10" fill="var(--danger)">após 3 falhas → DLQ</text>
+
+          <!-- arrow labels -->
+          <text x="181" y="168" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-2)">sns:Publish</text>
+          <text x="181" y="196" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">identity policy</text>
+
+          <text x="397" y="104" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">registrada</text>
+          <text x="397" y="168" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">baixada</text>
+          <text x="397" y="258" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">rejeitada</text>
+
+          <text x="584" y="42" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ink-2)">sqs:Receive</text>
+          <text x="584" y="146" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ink-2)">sqs:Receive</text>
+          <text x="584" y="250" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ink-2)">sqs:Receive</text>
+
+          <!-- band note -->
+          <text x="294" y="330" text-anchor="middle" font-size="10" fill="var(--ink-3)">FilterPolicy da subscription decide o roteamento</text>
+          <text x="294" y="345" text-anchor="middle" font-size="10" fill="var(--ink-3)">resource policy da fila decide a entrega</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Cada seta é uma autorização distinta.</b> As três setas do meio não passam por
+      role nenhuma — quem decide é a policy que mora no próprio recurso. É o tipo de
+      quebra mais difícil de diagnosticar, porque o <code>Publish</code> retorna
+      sucesso e a mensagem simplesmente não chega.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ============ 2 ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Figura 2 — cross-account no tempo</p>
+    <h2>O instante em que você muda de conta<span class="tag tag-conc">conceitual</span></h2>
+  </div>
+  <div class="prose">
+    <p>
+      Esta é a sua situação: uma role de origem e uma role cross de destino. O
+      desenho mostra <em>onde</em> no tempo a identidade troca, e qual documento
+      decide cada salto. Repare na assimetria — a origem responde por um documento,
+      o destino por três.
+    </p>
+  </div>
+
+  <figure>
+    <div class="figbody">
+      <svg viewBox="0 0 920 452" role="img" aria-label="Diagrama de sequência do padrão assume role: o pod na conta de origem 111122223333 chama sts:AssumeRole no STS, que devolve uma credencial temporária ASIA; a partir desse ponto a identidade passa a ser da conta de destino 444455556666, e a chamada s3:PutObject é feita como principal do destino. A identity policy fica na origem; a trust policy, a permission policy e a key policy do KMS ficam no destino.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- account bands -->
+        <rect x="0" y="0" width="300" height="452" fill="var(--band-origem)"/>
+        <rect x="620" y="0" width="300" height="452" fill="var(--band-destino)"/>
+
+        <g font-family="ui-monospace, Menlo, monospace">
+          <text x="16" y="26" font-size="10" font-weight="700" letter-spacing="1.2" fill="var(--ink-2)">CONTA DE ORIGEM</text>
+          <text x="16" y="41" font-size="10.5" fill="var(--ink-3)">cash-prd · 111122223333</text>
+          <text x="904" y="26" text-anchor="end" font-size="10" font-weight="700" letter-spacing="1.2" fill="var(--ink-2)">CONTA DE DESTINO</text>
+          <text x="904" y="41" text-anchor="end" font-size="10.5" fill="var(--ink-3)">dados-prd · 444455556666</text>
+
+          <!-- lifelines -->
+          <rect x="72" y="62" width="156" height="46" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="150" y="81" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">pod consumer</text>
+          <text x="150" y="97" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">role IRSA (origem)</text>
+
+          <rect x="382" y="62" width="156" height="46" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="460" y="81" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">AWS STS</text>
+          <text x="460" y="97" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">serviço global</text>
+
+          <rect x="692" y="62" width="156" height="46" rx="3" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="770" y="81" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">S3 + KMS</text>
+          <text x="770" y="97" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">recursos (destino)</text>
+
+          <g stroke="var(--rule-strong)" stroke-width="1.5" stroke-dasharray="3 4">
+            <line x1="150" y1="108" x2="150" y2="428"/>
+            <line x1="460" y1="108" x2="460" y2="428"/>
+            <line x1="770" y1="108" x2="770" y2="428"/>
+          </g>
+
+          <!-- msg 1 -->
+          <g color="var(--ink-2)">
+            <line x1="150" y1="152" x2="452" y2="152" stroke="currentColor" stroke-width="1.75" marker-end="url(#ar2)"/>
+          </g>
+          <text x="301" y="144" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">sts:AssumeRole(arn da role cross)</text>
+          <text x="301" y="170" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">decide: identity policy (origem) + trust policy (destino)</text>
+
+          <!-- msg 2 -->
+          <g color="var(--ink-2)">
+            <line x1="460" y1="216" x2="158" y2="216" stroke="currentColor" stroke-width="1.75" marker-end="url(#ar2)"/>
+          </g>
+          <text x="301" y="208" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">credencial temporária ASIA…</text>
+          <text x="301" y="234" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">expira em ~1 h · o SDK renova sozinho</text>
+
+          <!-- identity switch rule -->
+          <line x1="24" y1="268" x2="896" y2="268" stroke="var(--accent)" stroke-width="1.75" stroke-dasharray="6 4"/>
+          <rect x="300" y="254" width="320" height="28" rx="3" fill="var(--accent)"/>
+          <text x="460" y="272" text-anchor="middle" font-size="11" font-weight="700" fill="var(--on-accent)" letter-spacing="0.4">a partir daqui você é 444455556666</text>
+
+          <!-- msg 3 -->
+          <g color="var(--ink-2)">
+            <line x1="150" y1="330" x2="762" y2="330" stroke="currentColor" stroke-width="1.75" marker-end="url(#ar2)"/>
+          </g>
+          <text x="456" y="322" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">s3:PutObject · kms:GenerateDataKey</text>
+          <text x="456" y="348" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">decide: permission policy da role + key policy do KMS (ambas no destino)</text>
+
+          <!-- footer note -->
+          <line x1="24" y1="386" x2="896" y2="386" stroke="var(--rule-strong)" stroke-width="1"/>
+          <text x="24" y="408" font-size="10.5" font-weight="700" fill="var(--ink-2)">1 documento na origem</text>
+          <text x="24" y="424" font-size="10" fill="var(--ink-3)">identity policy</text>
+          <text x="896" y="408" text-anchor="end" font-size="10.5" font-weight="700" fill="var(--ink-2)">3 documentos no destino</text>
+          <text x="896" y="424" text-anchor="end" font-size="10" fill="var(--ink-3)">trust policy · permission policy · key policy</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Conceitual</b> — montado a partir do cenário do guia 02, não dos logs. A
+      execução registrada nesta página roda em conta única (<code>000000000000</code>)
+      e não contém eventos <code>AssumeRole</code>. A assimetria 1-para-3 no rodapé é
+      o motivo de a maioria dos <code>AccessDenied</code> cross-account ser falha do
+      lado do destino.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ============ 3 ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Figura 3 — quando</p>
+    <h2>32 traces em 90 segundos<span class="tag tag-real">dados reais</span></h2>
+  </div>
+  <div class="prose">
+    <p>
+      Cada marca é uma mensagem, posicionada no instante em que o publisher a
+      emitiu. As faixas separam os três consumers. O publisher dispara em intervalo
+      fixo e o SNS roteia por tipo de evento — daí o espaçamento regular e a divisão
+      desigual entre as filas.
+    </p>
+    <p>
+      A duração de cada trace não cabe nesta escala: são milissegundos num eixo de
+      90 segundos. Quem mostra duração é a figura 4.
+    </p>
+  </div>
+
+  <figure>
+    <div class="legend" id="lg3"></div>
+    <div class="figbody"><svg id="c3" role="img" aria-label="Gráfico de dispersão temporal: 32 traces distribuídos ao longo de 90 segundos em três faixas — consumer registro em python com 15 traces, consumer baixa em go com 8, consumer rejeicao em dotnet com 8. Uma marca aos 70,8 segundos na faixa go indica a mensagem que falhou e foi para a DLQ."></svg></div>
+    <figcaption>
+      <b>Passe o cursor sobre uma marca para ver o trace.</b> O losango vermelho aos
+      70,8 s é a mensagem envenenada — é ela que a figura 5 abre. O trace .NET
+      destacado aos 18,4 s é o primeiro da linguagem, e a figura 4 explica por que ele
+      é diferente dos outros sete.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ============ 4 ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Figura 4 — quanto tempo</p>
+    <h2>As cinco etapas de um trace<span class="tag tag-real">dados reais</span></h2>
+  </div>
+  <div class="prose">
+    <p>
+      O mesmo percurso da figura 1, agora em escala de milissegundos. Os três
+      primeiros painéis são o trace mediano de cada linguagem, no mesmo eixo, então
+      dá para comparar. O quarto painel tem eixo próprio — quatro vezes mais largo — e
+      está aí por um motivo.
+    </p>
+  </div>
+
+  <figure>
+    <div class="figbody"><svg id="c4" role="img" aria-label="Waterfall das etapas de quatro traces. Os traces medianos de python, go e dotnet levam entre 6,9 e 12,3 milissegundos no mesmo eixo. O quarto painel mostra o primeiro trace dotnet da execução, que levou 61,9 milissegundos num eixo quatro vezes mais largo."></svg></div>
+    <figcaption>
+      <b>O quarto painel é o primeiro trace .NET da execução inteira.</b> Levou 61,9 ms;
+      os sete .NET seguintes ficaram entre 9,2 e 13,9 ms. O padrão — primeira
+      execução lenta, resto estável — é a assinatura de aquecimento de runtime (JIT,
+      pool de conexões, cadeia de credenciais do SDK resolvendo pela primeira vez).
+      Com uma amostra só, é a explicação mais provável, não uma medição isolada da causa.
+    </figcaption>
+  </figure>
+
+  <div class="callout">
+    <span class="callout-label">Como ler o waterfall</span>
+    <p>
+      No painel do Go, <code>mensagem.recebida</code> aparece <em>antes</em> de
+      <code>publish.ok</code>. Não é violação de causalidade: publisher e consumer são
+      processos separados, cada um carimbando seu próprio relógio. O consumer já tinha
+      pego a mensagem da fila quando o publisher terminou de registrar o próprio
+      sucesso. É o lembrete de que um trace distribuído costura relógios que não são
+      o mesmo.
+    </p>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <caption style="text-align:left;font-family:var(--font-mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);padding-bottom:10px;">Latência ponta a ponta por linguagem (ms)</caption>
+      <thead>
+        <tr><th scope="col">Consumer</th><th scope="col">Linguagem</th><th scope="col">Traces</th><th scope="col">Mín</th><th scope="col">Mediana</th><th scope="col">p90</th><th scope="col">Máx</th></tr>
+      </thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Figura 5 — a falha</p>
+    <h2>Três tentativas e a DLQ<span class="tag tag-real">dados reais</span></h2>
+  </div>
+  <div class="prose">
+    <p>
+      Uma mensagem com corpo que não é JSON entrou na fila <code>baixa</code>. O
+      consumer Go tentou três vezes, com o intervalo de visibilidade da fila entre
+      elas, e na quarta a <code>maxReceiveCount</code> mandou a mensagem para a DLQ.
+      Mesmo <code>traceId</code>, mesmo <code>messageId</code>, três tentativas.
+    </p>
+  </div>
+
+  <figure>
+    <div class="figbody"><svg id="c5" role="img" aria-label="Linha do tempo da mensagem envenenada: três tentativas de processamento aos 0, 5,74 e 10,75 segundos, todas falhando com erro de JSON inválido, seguidas do envio para a dead letter queue."></svg></div>
+    <figcaption>
+      <b>O intervalo entre tentativas é o visibility timeout da fila</b>, não backoff do
+      código do consumer — o Go não tem retry próprio aqui. A mensagem volta a ficar
+      visível, outro <code>ReceiveMessage</code> a pega, e o ciclo repete até o limite.
+    </figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <span class="callout-label">O que estes números não provam</span>
+    <p>
+      A execução rodou contra o Floci, um simulador local — não contra a AWS. As
+      latências são reais no sentido de que foram medidas, mas medem containers
+      falando com um mock na mesma máquina, sem rede, sem TLS, sem o STS de verdade.
+      Servem para comparar as três linguagens entre si e para ver a forma do
+      pipeline. Não servem como estimativa de latência em produção, e o Floci não é
+      ponto de decisão de autorização: uma policy mal escrita passa aqui e falha na AWS.
+    </p>
+  </div>
+</section>
+
+<footer>
+  Fonte: <code>logs-do-lab.ndjson</code> — 168 eventos, 09 ago 2026 17:28:33–17:30:04 UTC.<br>
+  Figuras 1 e 2 são estruturais, montadas a partir dos guias 00 e 02. Figuras 3, 4 e 5 vêm dos logs.
+</footer>
+
+</div>
+
+<script id="dados" type="application/json">{"janelaMs":90606.8,"resumo":{"python":{"n":15,"p50":9.8,"min":6.94,"max":16.34,"p90":12.15},"go":{"n":8,"p50":6.93,"min":3.82,"max":9.11,"p90":7.94},"dotnet":{"n":8,"p50":11.15,"min":9.19,"max":61.85,"p90":13.94}},"outlierId":"24bc9885","traces":[{"id":"61f93de8","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":295.7,"ms":13.374,"falhou":false},{"id":"3d6f91b9","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":3307.5,"ms":10.452,"falhou":false},{"id":"5475f2a7","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":6317.5,"ms":7.942,"falhou":false},{"id":"4077173e","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":9329.4,"ms":8.139,"falhou":false},{"id":"131f9276","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":12335.5,"ms":9.799,"falhou":false},{"id":"3d90c3af","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":15342.4,"ms":9.984,"falhou":false},{"id":"24bc9885","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":18354.9,"ms":61.855,"falhou":false},{"id":"0cb66882","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":21367.4,"ms":10.74,"falhou":false},{"id":"6bd79963","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":24375.5,"ms":12.155,"falhou":false},{"id":"c18212ec","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":27388.5,"ms":13.612,"falhou":false},{"id":"d3cce954","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":30396.9,"ms":9.107,"falhou":false},{"id":"adb88585","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":33410.0,"ms":6.859,"falhou":false},{"id":"8b46f19c","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":36420.7,"ms":8.82,"falhou":false},{"id":"fe8e6764","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":39430.1,"ms":7.262,"falhou":false},{"id":"c65009a5","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":42441.3,"ms":6.939,"falhou":false},{"id":"66e87480","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":45451.0,"ms":13.937,"falhou":false},{"id":"eb2e589c","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":48463.5,"ms":16.345,"falhou":false},{"id":"752af21b","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":51477.0,"ms":7.786,"falhou":false},{"id":"4e9f8156","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":54483.6,"ms":12.287,"falhou":false},{"id":"4d390700","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":57494.8,"ms":9.194,"falhou":false},{"id":"3119ab71","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":60506.0,"ms":6.815,"falhou":false},{"id":"c88a8a29","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":63517.1,"ms":7.001,"falhou":false},{"id":"09b2f524","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":66525.2,"ms":8.976,"falhou":false},{"id":"2e3480f3","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":69534.3,"ms":9.091,"falhou":false},{"id":"90803efc","lang":"go","worker":"baixa","tipo":null,"t":70825.5,"ms":null,"falhou":true},{"id":"499ce71b","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":72543.5,"ms":9.898,"falhou":false},{"id":"7edd672a","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":75550.0,"ms":5.238,"falhou":false},{"id":"ae872639","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":78560.0,"ms":9.987,"falhou":false},{"id":"5b7c8852","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":81569.5,"ms":10.014,"falhou":false},{"id":"9102bd37","lang":"dotnet","worker":"rejeicao","tipo":"cobranca.rejeitada","t":84580.4,"ms":9.501,"falhou":false},{"id":"10a13b9d","lang":"python","worker":"registro","tipo":"cobranca.registrada","t":87592.1,"ms":9.264,"falhou":false},{"id":"8a6e6169","lang":"go","worker":"baixa","tipo":"cobranca.baixada","t":90603.0,"ms":3.824,"falhou":false}],"exemplares":[{"id":"131f9276","lang":"python","worker":"registro","ms":9.799,"etapas":[{"e":"publish.iniciado","off":0.0,"svc":"publisher"},{"e":"publish.ok","off":6.033,"svc":"publisher"},{"e":"mensagem.recebida","off":6.248,"svc":"consumer"},{"e":"comprovante.gravado","off":6.901,"svc":"consumer"},{"e":"mensagem.deletada","off":9.799,"svc":"consumer"}]},{"id":"adb88585","lang":"go","worker":"baixa","ms":6.859,"etapas":[{"e":"publish.iniciado","off":0.0,"svc":"publisher"},{"e":"mensagem.recebida","off":5.309,"svc":"consumer"},{"e":"publish.ok","off":5.453,"svc":"publisher"},{"e":"comprovante.gravado","off":5.634,"svc":"consumer"},{"e":"mensagem.deletada","off":6.859,"svc":"consumer"}]},{"id":"4e9f8156","lang":"dotnet","worker":"rejeicao","ms":12.287,"etapas":[{"e":"publish.iniciado","off":0.0,"svc":"publisher"},{"e":"publish.ok","off":5.586,"svc":"publisher"},{"e":"mensagem.recebida","off":7.327,"svc":"consumer"},{"e":"comprovante.gravado","off":8.881,"svc":"consumer"},{"e":"mensagem.deletada","off":12.287,"svc":"consumer"}]},{"id":"24bc9885","lang":"dotnet","worker":"rejeicao","ms":61.855,"frio":true,"etapas":[{"e":"publish.iniciado","off":0.0,"svc":"publisher"},{"e":"publish.ok","off":10.159,"svc":"publisher"},{"e":"mensagem.recebida","off":37.531,"svc":"consumer"},{"e":"comprovante.gravado","off":56.526,"svc":"consumer"},{"e":"mensagem.deletada","off":61.855,"svc":"consumer"}]}],"falha":{"id":"90803efc","lang":"go","worker":"baixa","etapas":[{"e":"mensagem.recebida","off":0.0},{"e":"mensagem.falhou","off":0.0},{"e":"mensagem.recebida","off":5.74},{"e":"mensagem.falhou","off":5.74},{"e":"mensagem.recebida","off":10.75},{"e":"mensagem.falhou","off":10.75}]}}</script>
+<script>
+(function () {
+  "use strict";
+  var D = JSON.parse(document.getElementById("dados").textContent);
+  var SVGNS = "http://www.w3.org/2000/svg";
+
+  var LANGS = ["python", "go", "dotnet"];
+  var COLOR = { python: "var(--s-python)", go: "var(--s-go)", dotnet: "var(--s-dotnet)" };
+  var WORKER = { python: "registro", go: "baixa", dotnet: "rejeicao" };
+
+  function el(n, a) {
+    var e = document.createElementNS(SVGNS, n);
+    for (var k in a) if (a[k] !== null && a[k] !== undefined) e.setAttribute(k, a[k]);
+    return e;
+  }
+  function txt(x, y, s, a) {
+    var t = el("text", a || {});
+    t.setAttribute("x", x); t.setAttribute("y", y);
+    t.setAttribute("font-family", "ui-monospace, Menlo, monospace");
+    t.textContent = s;
+    return t;
+  }
+  function num(v, d) { return v.toFixed(d === undefined ? 1 : d).replace(".", ","); }
+
+  /* ---------- tooltip ---------- */
+  var tip = document.getElementById("tip");
+  function bind(node, html) {
+    function show(ev) {
+      tip.innerHTML = html;
+      tip.classList.add("on");
+      var x = ev.clientX + 14, y = ev.clientY + 14;
+      var r = tip.getBoundingClientRect();
+      if (x + r.width > window.innerWidth - 8) x = ev.clientX - r.width - 14;
+      if (y + r.height > window.innerHeight - 8) y = ev.clientY - r.height - 14;
+      tip.style.left = x + "px"; tip.style.top = y + "px";
+    }
+    node.addEventListener("mouseenter", show);
+    node.addEventListener("mousemove", show);
+    node.addEventListener("mouseleave", function () { tip.classList.remove("on"); });
+    node.classList.add("mark");
+  }
+
+  /* ---------- legend ---------- */
+  var lg = document.getElementById("lg3");
+  LANGS.forEach(function (l) {
+    var s = document.createElement("span");
+    var sw = document.createElement("i");
+    sw.className = "swatch"; sw.style.background = COLOR[l];
+    s.appendChild(sw);
+    s.appendChild(document.createTextNode(WORKER[l] + " · " + l));
+    lg.appendChild(s);
+  });
+  var sf = document.createElement("span");
+  var sfi = document.createElement("i");
+  sfi.className = "swatch";
+  sfi.style.cssText = "background:var(--danger);transform:rotate(45deg);border-radius:1px";
+  sf.appendChild(sfi);
+  sf.appendChild(document.createTextNode("foi para a DLQ"));
+  lg.appendChild(sf);
+
+  /* ================= FIG 3 — strip plot ================= */
+  (function () {
+    var W = 960, H = 268, L = 104, R = 24, T = 26, B = 44;
+    var iw = W - L - R;
+    var lanes = { python: T + 26, go: T + 92, dotnet: T + 158 };
+    var maxT = D.janelaMs;
+    var svg = document.getElementById("c3");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+
+    function X(ms) { return L + (ms / maxT) * iw; }
+
+    // lane bands + direct labels
+    LANGS.forEach(function (l, i) {
+      var y = lanes[l];
+      if (i % 2 === 0) svg.appendChild(el("rect", { x: L, y: y - 24, width: iw, height: 48, fill: "var(--surface-2)", opacity: .55 }));
+      svg.appendChild(el("line", { x1: L, y1: y, x2: L + iw, y2: y, stroke: "var(--rule)", "stroke-width": 1 }));
+      svg.appendChild(txt(L - 12, y - 2, WORKER[l], { "text-anchor": "end", "font-size": 12, "font-weight": 600, fill: "var(--ink)" }));
+      svg.appendChild(txt(L - 12, y + 13, l, { "text-anchor": "end", "font-size": 10, fill: COLOR[l] }));
+    });
+
+    // x axis
+    var axY = T + 200;
+    svg.appendChild(el("line", { x1: L, y1: axY, x2: L + iw, y2: axY, stroke: "var(--rule-strong)", "stroke-width": 1 }));
+    for (var s = 0; s <= 90; s += 15) {
+      var x = X(s * 1000);
+      svg.appendChild(el("line", { x1: x, y1: axY, x2: x, y2: axY + 5, stroke: "var(--rule-strong)", "stroke-width": 1 }));
+      svg.appendChild(txt(x, axY + 20, s + "s", { "text-anchor": "middle", "font-size": 11, fill: "var(--ink-3)", "font-variant-numeric": "tabular-nums" }));
+    }
+    svg.appendChild(txt(L, axY + 38, "tempo desde o início da execução", { "font-size": 10.5, fill: "var(--ink-3)" }));
+
+    D.traces.forEach(function (t) {
+      if (!t.lang) return;
+      var x = X(t.t), y = lanes[t.lang];
+      var node;
+      if (t.falhou) {
+        node = el("path", {
+          d: "M " + x + " " + (y - 9) + " L " + (x + 8) + " " + y + " L " + x + " " + (y + 9) + " L " + (x - 8) + " " + y + " Z",
+          fill: "var(--danger)", stroke: "var(--surface)", "stroke-width": 2
+        });
+      } else {
+        var big = t.id === D.outlierId;
+        node = el("circle", {
+          cx: x, cy: y, r: big ? 8 : 5.5,
+          fill: big ? "var(--surface)" : COLOR[t.lang],
+          stroke: COLOR[t.lang], "stroke-width": big ? 2.5 : 2
+        });
+      }
+      node.setAttribute("tabindex", "0");
+      var body = t.falhou
+        ? "<b>" + t.id + "</b><br>" + t.worker + " · " + t.lang + "<br>3 tentativas → DLQ<br>t = " + num(t.t / 1000, 1) + " s"
+        : "<b>" + t.id + "</b><br>" + t.worker + " · " + t.lang + "<br>" + (t.tipo || "") + "<br>" + num(t.ms, 2) + " ms ponta a ponta<br>t = " + num(t.t / 1000, 1) + " s";
+      bind(node, body);
+      svg.appendChild(node);
+    });
+
+    // outlier annotation
+    var ox = X(D.traces.filter(function (t) { return t.id === D.outlierId; })[0].t);
+    svg.appendChild(el("line", { x1: ox, y1: lanes.dotnet + 12, x2: ox, y2: lanes.dotnet + 26, stroke: "var(--ink-3)", "stroke-width": 1 }));
+    svg.appendChild(txt(ox + 6, lanes.dotnet + 32, "1º .NET — 61,9 ms", { "font-size": 10, fill: "var(--ink-2)", "font-weight": 600 }));
+
+    var fx = X(D.traces.filter(function (t) { return t.falhou; })[0].t);
+    svg.appendChild(txt(fx - 8, lanes.go - 18, "envenenada", { "font-size": 10, "font-weight": 600, fill: "var(--danger)", "text-anchor": "end" }));
+  })();
+
+  /* ================= FIG 4 — waterfall ================= */
+  (function () {
+    var ETAPAS = {
+      "publish.iniciado": "publish.iniciado",
+      "publish.ok": "publish.ok",
+      "mensagem.recebida": "mensagem.recebida",
+      "comprovante.gravado": "comprovante.gravado",
+      "mensagem.deletada": "mensagem.deletada"
+    };
+    var ORDER = ["publish.iniciado", "publish.ok", "mensagem.recebida", "comprovante.gravado", "mensagem.deletada"];
+    var W = 960, L = 178, R = 92, PH = 132, GAP = 20, T = 30;
+    var iw = W - L - R;
+    var svg = document.getElementById("c4");
+    var ex = D.exemplares;
+    var H = T + ex.length * (PH + GAP) + 26;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+
+    var warmMax = 16;   // ms, shared axis for the three medians
+    var coldMax = 65;
+
+    ex.forEach(function (tr, i) {
+      var top = T + i * (PH + GAP);
+      var cold = !!tr.frio;
+      var mx = cold ? coldMax : warmMax;
+      function X(ms) { return L + (ms / mx) * iw; }
+
+      // panel label
+      svg.appendChild(txt(L - 16, top + 22, tr.worker, { "text-anchor": "end", "font-size": 12.5, "font-weight": 700, fill: "var(--ink)" }));
+      svg.appendChild(txt(L - 16, top + 38, tr.lang, { "text-anchor": "end", "font-size": 11, fill: COLOR[tr.lang], "font-weight": 600 }));
+      svg.appendChild(txt(L - 16, top + 54, tr.id, { "text-anchor": "end", "font-size": 9.5, fill: "var(--ink-3)" }));
+      if (cold) svg.appendChild(txt(L - 16, top + 70, "1º da execução", { "text-anchor": "end", "font-size": 9.5, fill: "var(--danger)", "font-weight": 600 }));
+
+      // total
+      svg.appendChild(txt(W - R + 14, top + 26, num(tr.ms, 1), { "font-size": 15, "font-weight": 700, fill: "var(--ink)", "font-variant-numeric": "tabular-nums" }));
+      svg.appendChild(txt(W - R + 14, top + 41, "ms total", { "font-size": 9.5, fill: "var(--ink-3)" }));
+
+      // axis
+      var axY = top + PH - 16;
+      svg.appendChild(el("line", { x1: L, y1: axY, x2: L + iw, y2: axY, stroke: "var(--rule-strong)", "stroke-width": 1 }));
+      var step = cold ? 10 : 2;
+      for (var v = 0; v <= mx; v += step) {
+        var x = X(v);
+        svg.appendChild(el("line", { x1: x, y1: top + 8, x2: x, y2: axY, stroke: "var(--rule)", "stroke-width": 1, "stroke-dasharray": "2 3" }));
+        svg.appendChild(txt(x, axY + 14, v + "", { "text-anchor": "middle", "font-size": 10, fill: "var(--ink-3)", "font-variant-numeric": "tabular-nums" }));
+      }
+      svg.appendChild(txt(L + iw, axY + 14, "ms", { "text-anchor": "start", "font-size": 10, fill: "var(--ink-3)", dx: 8 }));
+      if (cold) svg.appendChild(txt(L, top + 4, "eixo 4× mais largo que os painéis acima", { "font-size": 9.5, fill: "var(--danger)", "font-weight": 600 }));
+
+      // segments between consecutive stages
+      var st = tr.etapas.slice().sort(function (a, b) { return a.off - b.off; });
+      var laneY = top + 44;
+      for (var k = 0; k < st.length - 1; k++) {
+        var a = st[k], b = st[k + 1];
+        var x0 = X(a.off), x1 = X(b.off);
+        var w = Math.max(x1 - x0 - 2, 1.5);
+        var rect = el("rect", {
+          x: x0, y: laneY, width: w, height: 22, rx: 3,
+          fill: COLOR[tr.lang], opacity: 0.25 + 0.16 * k
+        });
+        rect.setAttribute("tabindex", "0");
+        bind(rect, "<b>" + ETAPAS[a.e] + " → " + ETAPAS[b.e] + "</b><br>" + num(b.off - a.off, 2) + " ms<br>em " + num(a.off, 2) + " ms");
+        svg.appendChild(rect);
+      }
+
+      // stage ticks + labels
+      st.forEach(function (s, k) {
+        var x = X(s.off);
+        svg.appendChild(el("line", { x1: x, y1: laneY - 6, x2: x, y2: laneY + 28, stroke: COLOR[tr.lang], "stroke-width": 1.75 }));
+        var lbl = ORDER.indexOf(s.e) >= 0 ? s.e.split(".")[1] : s.e;
+        var anchor = k === 0 ? "start" : (k === st.length - 1 ? "end" : "middle");
+        svg.appendChild(txt(x, laneY + 43, lbl, { "text-anchor": anchor, "font-size": 9.5, fill: "var(--ink-2)" }));
+      });
+    });
+  })();
+
+  /* ================= FIG 5 — retry ================= */
+  (function () {
+    var W = 960, H = 190, L = 40, R = 150, T = 46;
+    var iw = W - L - R;
+    var svg = document.getElementById("c5");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    var f = D.falha;
+    var tries = f.etapas.filter(function (e) { return e.e === "mensagem.falhou"; });
+    var maxT = 14;
+    function X(s) { return L + (s / maxT) * iw; }
+
+    var y = T + 34;
+    svg.appendChild(el("line", { x1: L, y1: y, x2: L + iw + 40, y2: y, stroke: "var(--rule-strong)", "stroke-width": 1.5 }));
+
+    tries.forEach(function (e, i) {
+      var x = X(e.off);
+      var g = el("g", {});
+      g.appendChild(el("circle", { cx: x, cy: y, r: 11, fill: "var(--danger-soft)", stroke: "var(--danger)", "stroke-width": 2 }));
+      var t = txt(x, y + 4, (i + 1) + "", { "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: "var(--danger)" });
+      g.appendChild(t);
+      g.setAttribute("tabindex", "0");
+      bind(g, "<b>tentativa " + (i + 1) + "</b><br>t = " + num(e.off, 2) + " s<br>corpo não é JSON válido");
+      svg.appendChild(g);
+
+      svg.appendChild(txt(x, y - 24, "tentativa " + (i + 1), { "text-anchor": "middle", "font-size": 11, "font-weight": 600, fill: "var(--ink)" }));
+      svg.appendChild(txt(x, y + 30, num(e.off, 2) + " s", { "text-anchor": "middle", "font-size": 10, fill: "var(--ink-3)", "font-variant-numeric": "tabular-nums" }));
+
+      if (i > 0) {
+        var xp = X(tries[i - 1].off), mid = (x + xp) / 2;
+        svg.appendChild(txt(mid, y + 50, "+" + num(e.off - tries[i - 1].off, 2) + " s", { "text-anchor": "middle", "font-size": 10, fill: "var(--ink-2)", "font-weight": 600 }));
+        svg.appendChild(el("line", { x1: xp + 13, y1: y + 42, x2: x - 13, y2: y + 42, stroke: "var(--rule-strong)", "stroke-width": 1, "stroke-dasharray": "3 3" }));
+      }
+    });
+
+    // DLQ terminal
+    var dx = X(tries[2].off) + 74;
+    svg.appendChild(el("line", { x1: X(tries[2].off) + 13, y1: y, x2: dx - 4, y2: y, stroke: "var(--danger)", "stroke-width": 1.75, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("rect", { x: dx, y: y - 17, width: 108, height: 34, rx: 3, fill: "var(--danger)" }));
+    svg.appendChild(txt(dx + 54, y + 5, "DLQ", { "text-anchor": "middle", "font-size": 13, "font-weight": 700, fill: "var(--on-danger)" }));
+    svg.appendChild(txt(dx + 54, y - 24, "maxReceiveCount", { "text-anchor": "middle", "font-size": 9.5, fill: "var(--ink-3)" }));
+
+    svg.appendChild(txt(L, T - 24, "mensagem " + f.id + " · fila " + f.worker + " · consumer " + f.lang, { "font-size": 11, "font-weight": 600, fill: "var(--ink-2)" }));
+    svg.appendChild(txt(L, H - 12, "erro idêntico nas três: corpo nao e JSON valido: invalid character 'i'", { "font-size": 10, fill: "var(--ink-3)" }));
+  })();
+
+  /* ================= table ================= */
+  (function () {
+    var tb = document.getElementById("tb");
+    LANGS.forEach(function (l) {
+      var r = D.resumo[l];
+      var tr = document.createElement("tr");
+      function td(html, raw) {
+        var c = document.createElement("td");
+        if (raw) c.innerHTML = html; else c.textContent = html;
+        return c;
+      }
+      var first = document.createElement("td");
+      var wrap = document.createElement("span");
+      wrap.className = "lang-cell";
+      var sw = document.createElement("i");
+      sw.className = "swatch"; sw.style.background = COLOR[l];
+      wrap.appendChild(sw);
+      wrap.appendChild(document.createTextNode(WORKER[l]));
+      first.appendChild(wrap);
+      tr.appendChild(first);
+      tr.appendChild(td(l));
+      tr.appendChild(td(String(r.n)));
+      tr.appendChild(td(num(r.min, 2)));
+      tr.appendChild(td(num(r.p50, 2)));
+      tr.appendChild(td(num(r.p90, 2)));
+      tr.appendChild(td(num(r.max, 2)));
+      tb.appendChild(tr);
+    });
+  })();
+})();
+</script>
+</body>
+</html>

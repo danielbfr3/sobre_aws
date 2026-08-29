@@ -1,0 +1,157 @@
+# Lab: SNS -> SQS -> workers, rodando localmente contra o Floci.
+#
+# Tres consumers, TRES LINGUAGENS DIFERENTES, o mesmo pipeline:
+#
+#   consumer-registro   Python  (boto3)
+#   consumer-baixa      Go      (aws-sdk-go-v2)
+#   consumer-rejeicao   .NET    (AWSSDK)
+#
+# Isso nao e enfeite: e a demonstracao do capitulo 07. Os tres leem a MESMA
+# credencial da MESMA forma (nenhum deles a recebe no construtor), gravam
+# comprovantes byte a byte identicos no MESMO volume, e o ./run.sh verify nao
+# consegue distinguir qual worker esta em qual linguagem.
+#
+# Suba com  ./run.sh up  (a ordem importa - veja o README secao 6).
+
+name: aws-eks-lab
+
+# -----------------------------------------------------------------------------
+# O bloco de ambiente que TODO worker recebe.
+#
+# Repare no que NAO esta aqui: nada especifico de linguagem. E repare no que
+# esta: credenciais de mentira. Contra o Floci qualquer valor nao-vazio serve;
+# o que importa didaticamente e que a credencial chega pelo AMBIENTE, nunca
+# pelo codigo. No EKS estas tres variaveis somem e o webhook injeta
+# AWS_ROLE_ARN + AWS_WEB_IDENTITY_TOKEN_FILE no lugar - sem recompilar nada.
+# -----------------------------------------------------------------------------
+x-aws-local: &aws-local
+  AWS_ENDPOINT_URL: http://floci:4566
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # O emulador. Drop-in do LocalStack: mesma porta 4566, mesmo /_localstack/health.
+  # ---------------------------------------------------------------------------
+  floci:
+    image: floci/floci:latest
+    container_name: floci
+    ports:
+      - "4566:4566"
+    environment:
+      # Sem isto, a URL que o Floci devolve em get-queue-url carrega o host que
+      # veio no cabecalho da requisicao - que muda conforme quem perguntou (o
+      # container diz "floci", o seu terminal diz "localhost"). Fixar o hostname
+      # torna a URL estavel para todo mundo.
+      FLOCI_HOSTNAME: floci
+      # memory = estado morre junto com o container. E o que voce quer num lab:
+      # ./run.sh reset volta ao zero. Trocar para "persistent" e montar
+      # ./data:/app/data faria o topico e as filas sobreviverem ao down.
+      FLOCI_STORAGE_MODE: memory
+    # Sem healthcheck de proposito: a imagem nao promete ter curl/wget dentro.
+    # Quem espera o Floci ficar de pe e o run.sh, do lado de fora, batendo em
+    # /_localstack/health. Os workers tambem tem retry proprio.
+
+  # ---------------------------------------------------------------------------
+  # PUBLISHER - Python.
+  #
+  # Trocar de linguagem aqui e trocar duas linhas: aponte o build para
+  # ./examples/multilinguagem/go (command: ["/app/publisher"]) ou para
+  # ./examples/multilinguagem/dotnet (command: ["dotnet","Lab.dll","publisher"]).
+  # O resto do lab nao percebe.
+  # ---------------------------------------------------------------------------
+  publisher:
+    build:
+      context: ./examples/multilinguagem/python
+    command: ["python", "-u", "publisher.py"]
+    depends_on:
+      - floci
+    environment:
+      <<: *aws-local
+      # O bootstrap.sh grava estes ARNs no .env. Em TOPIC_MODE=single os tres
+      # apontam para o mesmo topico e o roteamento e da FilterPolicy; em
+      # TOPIC_MODE=multi cada um e um topico proprio. O publisher nao sabe a
+      # diferenca - ele so procura o ARN do tipo de evento que vai publicar.
+      TOPIC_ARN_COBRANCA_REGISTRADA: ${TOPIC_ARN_COBRANCA_REGISTRADA:-arn:aws:sns:us-east-1:000000000000:eventos-cobranca}
+      TOPIC_ARN_COBRANCA_BAIXADA:    ${TOPIC_ARN_COBRANCA_BAIXADA:-arn:aws:sns:us-east-1:000000000000:eventos-cobranca}
+      TOPIC_ARN_COBRANCA_REJEITADA:  ${TOPIC_ARN_COBRANCA_REJEITADA:-arn:aws:sns:us-east-1:000000000000:eventos-cobranca}
+      INTERVALO_SEGUNDOS: "3"
+      DATA_PATH: /data
+    volumes:
+      # O publisher nao grava comprovante nenhum - ele monta o volume so para
+      # escrever /data/logs/publisher-<host>.ndjson.
+      #
+      # Em producao voce NAO faria isso: o worker escreve log no stdout e um
+      # coletor (fluent-bit, CloudWatch agent) leva dali para onde precisa. O
+      # volume aqui e o substituto de laboratorio para esse coletor - e o que
+      # permite ao ./run.sh trace e ao visualizador juntarem, num lugar so, o
+      # que quatro processos em tres linguagens escreveram.
+      - comprovantes:/data
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER registro - Python / boto3
+  # ---------------------------------------------------------------------------
+  consumer-registro:
+    build:
+      context: ./examples/multilinguagem/python
+    command: ["python", "-u", "consumer.py"]
+    depends_on:
+      - floci
+    environment:
+      <<: *aws-local
+      WORKER: registro
+      QUEUE_URL: http://floci:4566/000000000000/cobranca-registro
+      DATA_PATH: /data
+    volumes:
+      - comprovantes:/data
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER baixa - Go / aws-sdk-go-v2
+  # ---------------------------------------------------------------------------
+  consumer-baixa:
+    build:
+      context: ./examples/multilinguagem/go
+    command: ["/app/consumer"]
+    depends_on:
+      - floci
+    environment:
+      <<: *aws-local
+      WORKER: baixa
+      QUEUE_URL: http://floci:4566/000000000000/cobranca-baixa
+      DATA_PATH: /data
+    volumes:
+      - comprovantes:/data
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER rejeicao - .NET / AWSSDK
+  # ---------------------------------------------------------------------------
+  consumer-rejeicao:
+    build:
+      context: ./examples/multilinguagem/dotnet
+    command: ["dotnet", "Lab.dll", "consumer"]
+    depends_on:
+      - floci
+    environment:
+      <<: *aws-local
+      WORKER: rejeicao
+      QUEUE_URL: http://floci:4566/000000000000/cobranca-rejeicao
+      DATA_PATH: /data
+    volumes:
+      - comprovantes:/data
+    restart: unless-stopped
+
+# -----------------------------------------------------------------------------
+# O volume compartilhado. E o ensaio local do PVC ReadWriteMany (EFS):
+# tres containers montando o MESMO diretorio em /data, cada um enxergando o
+# que os outros escreveram. Com EBS (ReadWriteOnce) isso nao existiria.
+#
+# Sobrevive ao "docker compose down". So o "-v" do ./run.sh reset apaga.
+# -----------------------------------------------------------------------------
+volumes:
+  comprovantes:

@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visualizador — SNS → SQS → workers no EKS</title>
+<style>
+  :root{
+    --bg:#12100e; --painel:#1c1917; --borda:#3a3330; --texto:#f0ebe5;
+    --fraco:#9a8f86; --ambar:#e8a33d; --verde:#5fb87a; --vermelho:#d9534f;
+    --azul:#5b9bd5; --roxo:#a586c9;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--texto);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  header{padding:20px 24px 12px;border-bottom:1px solid var(--borda)}
+  h1{margin:0 0 4px;font-size:19px;letter-spacing:-.2px}
+  .sub{color:var(--fraco);font-size:13px}
+  .wrap{display:grid;grid-template-columns:1fr 340px;gap:0;min-height:calc(100vh - 74px)}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  .palco{padding:22px;overflow:hidden}
+  .lateral{border-left:1px solid var(--borda);background:var(--painel);padding:20px;overflow-y:auto}
+  @media(max-width:900px){.lateral{border-left:none;border-top:1px solid var(--borda)}}
+
+  .barra{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+  button{font:inherit;font-size:13px;padding:8px 14px;border-radius:6px;cursor:pointer;
+    background:var(--painel);color:var(--texto);border:1px solid var(--borda);transition:.15s}
+  button:hover{border-color:var(--ambar)}
+  button.primario{background:var(--ambar);color:#1a1512;border-color:var(--ambar);font-weight:600}
+  button.primario:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+
+  svg{width:100%;height:auto;display:block}
+  .caixa{fill:var(--painel);stroke:var(--borda);stroke-width:1.5;rx:8}
+  .caixa.ativa{stroke:var(--ambar);stroke-width:2.5}
+  .caixa.negada{stroke:var(--vermelho);stroke-width:2.5}
+  .rotulo{fill:var(--texto);font-size:12.5px;font-weight:600}
+  .mini{fill:var(--fraco);font-size:10.5px;font-family:var(--mono)}
+  .seta{stroke:var(--borda);stroke-width:1.5;fill:none;marker-end:url(#ponta)}
+  .seta.ativa{stroke:var(--ambar);stroke-width:2.5;marker-end:url(#pontaAtiva)}
+  .seta.negada{stroke:var(--vermelho);stroke-dasharray:5 4;marker-end:url(#pontaNegada)}
+  .cadeado{font-size:13px}
+
+  .grupo{margin-bottom:18px}
+  .grupo h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;
+    letter-spacing:.09em;color:var(--fraco);font-weight:700}
+  .toggle{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:6px;
+    border:1px solid var(--borda);margin-bottom:6px;cursor:pointer;font-size:12.5px}
+  .toggle:hover{border-color:var(--fraco)}
+  .toggle input{accent-color:var(--vermelho);cursor:pointer;margin:0}
+  .toggle.quebrado{border-color:var(--vermelho);background:rgba(217,83,79,.08)}
+
+  #log{font-family:var(--mono);font-size:11.5px;line-height:1.65;
+    max-height:280px;overflow-y:auto;background:var(--bg);
+    border:1px solid var(--borda);border-radius:6px;padding:10px}
+  #log div{margin-bottom:3px;word-break:break-word}
+  .l-ok{color:var(--verde)} .l-err{color:var(--vermelho)}
+  .l-info{color:var(--fraco)} .l-dest{color:var(--ambar)}
+  .l-iam{color:var(--roxo)} .l-kms{color:var(--azul)}
+
+  .placar{display:flex;gap:14px;margin-bottom:12px;font-family:var(--mono);font-size:11.5px}
+  .placar b{display:block;font-size:19px;font-weight:700}
+  .nota{font-size:11.5px;color:var(--fraco);margin-top:14px;
+    padding-top:14px;border-top:1px solid var(--borda)}
+  code{font-family:var(--mono);font-size:11px;background:var(--bg);
+    padding:1px 4px;border-radius:3px;color:var(--ambar)}
+
+  /* ---- abas: simulacao | logs reais ---- */
+  .abas{display:flex;gap:4px;padding:0 24px;border-bottom:1px solid var(--borda);
+    background:var(--bg)}
+  .aba{padding:9px 16px;font-size:13px;cursor:pointer;border:none;border-radius:0;
+    background:transparent;color:var(--fraco);border-bottom:2px solid transparent}
+  .aba:hover{color:var(--texto);border-color:transparent}
+  .aba.sel{color:var(--ambar);border-bottom-color:var(--ambar);font-weight:600}
+  .modo{display:none} .modo.sel{display:block}
+
+  /* ---- carga do arquivo ---- */
+  .solta{border:1.5px dashed var(--borda);border-radius:8px;padding:18px;
+    text-align:center;color:var(--fraco);font-size:12.5px;cursor:pointer;
+    transition:.15s;margin-bottom:14px}
+  .solta:hover,.solta.sobre{border-color:var(--ambar);color:var(--texto);
+    background:rgba(232,163,61,.06)}
+  .solta b{color:var(--ambar);font-weight:600}
+  textarea{width:100%;height:76px;background:var(--bg);color:var(--texto);
+    border:1px solid var(--borda);border-radius:6px;padding:8px;
+    font-family:var(--mono);font-size:11px;resize:vertical}
+
+  /* ---- lista de traces ---- */
+  #traces{max-height:340px;overflow-y:auto;border:1px solid var(--borda);
+    border-radius:6px;background:var(--bg)}
+  .tr{padding:8px 10px;border-bottom:1px solid var(--borda);cursor:pointer;
+    font-family:var(--mono);font-size:11px;line-height:1.5}
+  .tr:last-child{border-bottom:none}
+  .tr:hover{background:var(--painel)}
+  .tr.sel{background:rgba(232,163,61,.12);border-left:3px solid var(--ambar);
+    padding-left:7px}
+  .tr .id{color:var(--ambar)}
+  .tr .meta{color:var(--fraco);display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .pill{border:1px solid var(--borda);border-radius:9px;padding:0 6px;font-size:10px}
+  .pill.python{color:#6aa9dd;border-color:#31506b}
+  .pill.go{color:#63c9c0;border-color:#2c5a56}
+  .pill.dotnet{color:#b98cd6;border-color:#553f68}
+  .pill.ok{color:var(--verde);border-color:#2f5c3c}
+  .pill.dup{color:var(--ambar);border-color:#6b4f24}
+  .pill.dlq{color:var(--vermelho);border-color:#6b3230}
+
+  .filtros{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+  .filtros button{padding:5px 10px;font-size:11.5px}
+  .filtros button.sel{background:var(--ambar);color:#1a1512;border-color:var(--ambar)}
+  .vazio{padding:14px;color:var(--fraco);font-size:12px;text-align:center}
+
+  /* ---- aba cross-account -------------------------------------------------
+     A conta e a unidade visual desta aba: tudo que importa aqui e "de que
+     lado da fronteira isso mora". Origem em azul, destino em roxo, e as duas
+     cores se repetem no desenho, nos cabecalhos dos documentos e na
+     identidade atual - e assim que se le o painel sem legenda.            */
+  .conta-o{fill:none;stroke:var(--azul);stroke-width:1.5;stroke-dasharray:6 4;rx:10;opacity:.75}
+  .conta-d{fill:none;stroke:var(--roxo);stroke-width:1.5;stroke-dasharray:6 4;rx:10;opacity:.75}
+  .rot-conta{font-size:11px;font-weight:700;letter-spacing:.04em}
+  .rot-o{fill:var(--azul)} .rot-d{fill:var(--roxo)}
+  .caixa.apagada{opacity:.28}
+  .seta.apagada{opacity:.18}
+  .seta.tracejada{stroke-dasharray:4 4}
+
+  .padroes{display:flex;flex-direction:column;gap:5px;margin-bottom:4px}
+  .padroes button{text-align:left;padding:8px 10px;font-size:12.5px;line-height:1.35}
+  .padroes button.sel{border-color:var(--ambar);background:rgba(232,163,61,.1)}
+  .padroes button small{display:block;color:var(--fraco);font-size:10.5px;margin-top:2px}
+
+  /* passo atual: o "voce esta aqui" da narrativa */
+  .passo{border:1px solid var(--borda);border-radius:6px;padding:9px 11px;
+    background:var(--bg);font-size:12px;margin-bottom:10px}
+  .passo .n{font-family:var(--mono);font-size:10.5px;color:var(--ambar);
+    text-transform:uppercase;letter-spacing:.07em}
+  .passo .t{font-weight:600;margin:3px 0 2px}
+  .passo .d{color:var(--fraco);font-size:11.5px}
+
+  /* quem voce e AGORA - o painel que responde "qual role esta em acao" */
+  .ident{border:1px solid var(--borda);border-radius:6px;background:var(--bg);
+    padding:9px 11px;font-family:var(--mono);font-size:11px;line-height:1.7}
+  .ident .lin{display:flex;gap:8px}
+  .ident .lin span:first-child{color:var(--fraco);min-width:52px;flex-shrink:0}
+  .ident .lin span:last-child{word-break:break-all}
+  .ident.origem{border-left:3px solid var(--azul)}
+  .ident.destino{border-left:3px solid var(--roxo)}
+  .ident .mud{color:var(--ambar);font-weight:700}
+
+  /* o documento em jogo no passo atual */
+  .doc{border:1px solid var(--borda);border-radius:6px;background:var(--bg);
+    overflow:hidden;margin-bottom:8px}
+  .doc h4{margin:0;padding:7px 10px;font-size:11px;font-weight:700;
+    border-bottom:1px solid var(--borda);display:flex;justify-content:space-between;
+    align-items:center;gap:8px}
+  .doc h4 em{font-style:normal;font-size:10px;font-family:var(--mono);font-weight:600;
+    padding:1px 6px;border-radius:9px}
+  .doc.origem h4{color:var(--azul)} .doc.origem h4 em{border:1px solid var(--azul)}
+  .doc.destino h4{color:var(--roxo)} .doc.destino h4 em{border:1px solid var(--roxo)}
+  .doc .q{padding:6px 10px 0;color:var(--fraco);font-size:11px;font-style:italic}
+  .doc pre{margin:0;padding:8px 10px;font-family:var(--mono);font-size:10.5px;
+    line-height:1.5;overflow-x:auto;white-space:pre;color:var(--texto)}
+  .doc.negado{border-color:var(--vermelho)}
+  .doc.negado pre{color:var(--vermelho)}
+
+  .transito{font-family:var(--mono);font-size:11px;color:var(--ambar);
+    border:1px dashed var(--borda);border-radius:6px;padding:7px 10px;
+    background:var(--bg);word-break:break-all}
+  .transito b{color:var(--fraco);font-weight:400;display:block;font-size:10px;
+    text-transform:uppercase;letter-spacing:.07em;margin-bottom:2px}
+  .toggle.inerte{opacity:.4}
+  .toggle .naoaplica{color:var(--fraco);font-size:10px;display:block;margin-top:1px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="titulo">SNS → SQS → workers → volume</h1>
+  <div class="sub" id="subtitulo">Cada seta é uma chamada que o IAM autoriza ou nega. Quebre uma permissão e veja onde o fluxo para.</div>
+</header>
+
+<div class="abas">
+  <button type="button" class="aba sel" data-modo="sim">Simulação</button>
+  <button type="button" class="aba" data-modo="logs">Logs reais</button>
+  <button type="button" class="aba" data-modo="xa">Cross-account</button>
+</div>
+
+<div class="wrap">
+  <div class="palco">
+    <div class="barra modo sel" id="barra-sim">
+      <button type="button" class="primario" id="btn1">Publicar 1 evento</button>
+      <button type="button" id="btn10">Publicar 10</button>
+      <button type="button" id="btnDup">Publicar duplicata</button>
+      <button type="button" id="btnLimpar">Limpar</button>
+    </div>
+    <div class="barra modo" id="barra-logs">
+      <button type="button" class="primario" id="btnReplay">Reproduzir o trace</button>
+      <button type="button" id="btnLimparLogs">Descarregar</button>
+      <span style="align-self:center;color:var(--fraco);font-size:12px" id="resumoLogs"></span>
+    </div>
+    <div class="barra modo" id="barra-xa">
+      <button type="button" class="primario" id="btnXaTudo">Executar a travessia</button>
+      <button type="button" id="btnXaPasso">Passo a passo ›</button>
+      <button type="button" id="btnXaZerar">Reiniciar</button>
+    </div>
+
+    <div class="modo sel" id="palco-fluxo">
+    <svg viewBox="0 0 860 470" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ponta" markerWidth="9" markerHeight="9" refX="8" refY="3"
+          orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#3a3330"/></marker>
+        <marker id="pontaAtiva" markerWidth="9" markerHeight="9" refX="8" refY="3"
+          orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#e8a33d"/></marker>
+        <marker id="pontaNegada" markerWidth="9" markerHeight="9" refX="8" refY="3"
+          orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#d9534f"/></marker>
+      </defs>
+
+      <!-- publisher -->
+      <g id="g-pub">
+        <rect class="caixa" x="20" y="180" width="140" height="66"/>
+        <text class="rotulo" x="90" y="205" text-anchor="middle">publisher</text>
+        <text class="mini" x="90" y="222" text-anchor="middle">sa-publisher</text>
+        <text class="mini" x="90" y="236" text-anchor="middle">sns:Publish</text>
+      </g>
+
+      <path id="s-pub" class="seta" d="M162,213 L228,213"/>
+      <text class="cadeado" id="c-pub" x="195" y="203" text-anchor="middle"></text>
+
+      <!-- SNS -->
+      <g id="g-sns">
+        <rect class="caixa" x="230" y="170" width="130" height="86"/>
+        <text class="rotulo" x="295" y="196" text-anchor="middle">SNS</text>
+        <text class="mini" x="295" y="213" text-anchor="middle">eventos-cobranca</text>
+        <text class="mini" x="295" y="232" text-anchor="middle">FilterPolicy</text>
+        <text class="mini" x="295" y="246" text-anchor="middle">por eventType</text>
+      </g>
+
+      <!-- setas SNS -> filas -->
+      <path id="s-q0" class="seta" d="M362,196 C400,196 400,80 438,80"/>
+      <path id="s-q1" class="seta" d="M362,213 L438,213"/>
+      <path id="s-q2" class="seta" d="M362,230 C400,230 400,346 438,346"/>
+      <text class="cadeado" id="c-q0" x="404" y="128" text-anchor="middle"></text>
+      <text class="cadeado" id="c-q1" x="400" y="205" text-anchor="middle"></text>
+      <text class="cadeado" id="c-q2" x="404" y="300" text-anchor="middle"></text>
+
+      <!-- filas + workers -->
+      <g id="g-fila0">
+        <rect class="caixa" x="440" y="48" width="120" height="64"/>
+        <text class="rotulo" x="500" y="72" text-anchor="middle">SQS registro</text>
+        <text class="mini" x="500" y="89" text-anchor="middle" id="n-fila0">0 msg</text>
+        <text class="mini" x="500" y="103" text-anchor="middle">+ DLQ</text>
+      </g>
+      <path id="s-w0" class="seta" d="M562,80 L628,80"/>
+      <text class="cadeado" id="c-w0" x="595" y="70" text-anchor="middle"></text>
+      <g id="g-work0">
+        <rect class="caixa" x="630" y="48" width="140" height="64"/>
+        <text class="rotulo" x="700" y="72" text-anchor="middle">consumer registro</text>
+        <text class="mini" x="700" y="89" text-anchor="middle">sa-consumer-registro</text>
+        <text class="mini" x="700" y="103" text-anchor="middle" id="p-work0">0 comprovantes</text>
+      </g>
+
+      <g id="g-fila1">
+        <rect class="caixa" x="440" y="181" width="120" height="64"/>
+        <text class="rotulo" x="500" y="205" text-anchor="middle">SQS baixa</text>
+        <text class="mini" x="500" y="222" text-anchor="middle" id="n-fila1">0 msg</text>
+        <text class="mini" x="500" y="236" text-anchor="middle">+ DLQ</text>
+      </g>
+      <path id="s-w1" class="seta" d="M562,213 L628,213"/>
+      <text class="cadeado" id="c-w1" x="595" y="203" text-anchor="middle"></text>
+      <g id="g-work1">
+        <rect class="caixa" x="630" y="181" width="140" height="64"/>
+        <text class="rotulo" x="700" y="205" text-anchor="middle">consumer baixa</text>
+        <text class="mini" x="700" y="222" text-anchor="middle">sa-consumer-baixa</text>
+        <text class="mini" x="700" y="236" text-anchor="middle" id="p-work1">0 comprovantes</text>
+      </g>
+
+      <g id="g-fila2">
+        <rect class="caixa" x="440" y="314" width="120" height="64"/>
+        <text class="rotulo" x="500" y="338" text-anchor="middle">SQS rejeicao</text>
+        <text class="mini" x="500" y="355" text-anchor="middle" id="n-fila2">0 msg</text>
+        <text class="mini" x="500" y="369" text-anchor="middle">+ DLQ</text>
+      </g>
+      <path id="s-w2" class="seta" d="M562,346 L628,346"/>
+      <text class="cadeado" id="c-w2" x="595" y="336" text-anchor="middle"></text>
+      <g id="g-work2">
+        <rect class="caixa" x="630" y="314" width="140" height="64"/>
+        <text class="rotulo" x="700" y="338" text-anchor="middle">consumer rejeicao</text>
+        <text class="mini" x="700" y="355" text-anchor="middle">sa-consumer-rejeicao</text>
+        <text class="mini" x="700" y="369" text-anchor="middle" id="p-work2">0 comprovantes</text>
+      </g>
+
+      <!-- volume -->
+      <path id="s-vol0" class="seta" d="M700,114 C700,150 500,400 452,424"/>
+      <path id="s-vol1" class="seta" d="M700,247 C700,300 560,410 452,428"/>
+      <path id="s-vol2" class="seta" d="M700,380 C660,410 520,428 452,432"/>
+      <g id="g-vol">
+        <rect class="caixa" x="250" y="400" width="200" height="60"/>
+        <text class="rotulo" x="350" y="424" text-anchor="middle">PVC EFS (ReadWriteMany)</text>
+        <text class="mini" x="350" y="441" text-anchor="middle">/data/comprovantes/</text>
+        <text class="mini" x="350" y="454" text-anchor="middle" id="n-vol">0 arquivos .txt</text>
+      </g>
+
+      <!-- mensagem animada -->
+      <circle id="bolha" r="6" fill="#e8a33d" opacity="0"/>
+      <text id="bolhaTxt" class="mini" fill="#e8a33d" opacity="0"></text>
+    </svg>
+    </div><!-- /palco-fluxo -->
+
+    <!-- ================= PALCO: CROSS-ACCOUNT =================
+         Duas contas, e o que atravessa entre elas. A fronteira e a coisa
+         mais visivel do desenho de proposito: e ela que o guia 02 chama de
+         "a fronteira de seguranca mais forte da AWS".                    -->
+    <div class="modo" id="palco-xa">
+    <svg viewBox="0 0 860 470" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-labelledby="x-titulo">
+      <title id="x-titulo">Duas contas AWS lado a lado: a de origem, com o cluster EKS e a
+        role do worker; a de destino, com a role gravadora, a fila SQS e a chave KMS. As
+        setas mostram o pedido de AssumeRole, a conferência da trust policy e a chamada
+        que atravessa a fronteira.</title>
+      <defs>
+        <marker id="pontaX" markerWidth="9" markerHeight="9" refX="8" refY="3"
+                orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#3a3330"/></marker>
+        <marker id="pontaXAtiva" markerWidth="9" markerHeight="9" refX="8" refY="3"
+                orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#e8a33d"/></marker>
+        <marker id="pontaXNegada" markerWidth="9" markerHeight="9" refX="8" refY="3"
+                orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#d9534f"/></marker>
+      </defs>
+
+      <!-- ---------- as duas contas ---------- -->
+      <rect class="conta-o" x="18" y="52" width="330" height="392"/>
+      <text class="rot-conta rot-o" x="34" y="44">CONTA DE ORIGEM · cash-prd · 111122223333</text>
+      <text class="mini" x="34" y="70" fill="#5b9bd5">onde o workload roda</text>
+
+      <rect class="conta-d" x="512" y="52" width="330" height="392"/>
+      <text class="rot-conta rot-d" x="528" y="44">CONTA DE DESTINO · dados-prd · 444455556666</text>
+      <text class="mini" x="528" y="70" fill="#a586c9">onde o recurso está</text>
+
+      <!-- ---------- origem: a cadeia de identidade ---------- -->
+      <g id="x-sa">
+        <rect class="caixa" x="38" y="86" width="290" height="52"/>
+        <text class="rotulo" x="183" y="108" text-anchor="middle">ServiceAccount + OIDC do cluster</text>
+        <text class="mini" x="183" y="125" text-anchor="middle">system:serviceaccount:cash:sa-consumer-registro</text>
+      </g>
+
+      <g id="x-pod">
+        <rect class="caixa" x="38" y="176" width="290" height="58"/>
+        <text class="rotulo" x="183" y="199" text-anchor="middle">pod consumer-registro</text>
+        <text class="mini" x="183" y="217" text-anchor="middle">o código que faz a chamada</text>
+      </g>
+
+      <g id="x-roleo">
+        <rect class="caixa" x="38" y="272" width="290" height="58"/>
+        <text class="rotulo" x="183" y="294" text-anchor="middle">role IRSA (origem)</text>
+        <text class="mini" x="183" y="312" text-anchor="middle">asa-prd-cash-cobranca-consumer-registro</text>
+      </g>
+
+      <text class="mini" x="183" y="366" text-anchor="middle" id="x-doc-o">1 documento: identity policy</text>
+
+      <!-- ---------- STS no meio ---------- -->
+      <g id="x-sts">
+        <rect class="caixa" x="378" y="168" width="104" height="74"/>
+        <text class="rotulo" x="430" y="196" text-anchor="middle">AWS STS</text>
+        <text class="mini" x="430" y="213" text-anchor="middle">confere e</text>
+        <text class="mini" x="430" y="226" text-anchor="middle">emite ASIA…</text>
+      </g>
+
+      <!-- ---------- destino: role + recurso + chave ---------- -->
+      <g id="x-roled">
+        <rect class="caixa" x="532" y="86" width="290" height="58"/>
+        <text class="rotulo" x="677" y="108" text-anchor="middle">role gravadora (destino)</text>
+        <text class="mini" x="677" y="126" text-anchor="middle">asa-prd-dados-gravador-comprovantes</text>
+      </g>
+
+      <g id="x-rec">
+        <rect class="caixa" x="532" y="196" width="290" height="58"/>
+        <text class="rotulo" x="677" y="219" text-anchor="middle">SQS auditoria-comprovantes</text>
+        <text class="mini" x="677" y="237" text-anchor="middle" id="x-n-rec">0 mensagens</text>
+      </g>
+
+      <g id="x-kms">
+        <rect class="caixa" x="532" y="300" width="290" height="54"/>
+        <text class="rotulo" x="677" y="322" text-anchor="middle">chave KMS do time de dados</text>
+        <text class="mini" x="677" y="339" text-anchor="middle">key policy — o terceiro documento</text>
+      </g>
+
+      <text class="mini" x="677" y="384" text-anchor="middle" id="x-doc-d">3 documentos: trust + permission + key policy</text>
+
+      <!-- ---------- as travessias ---------- -->
+      <!-- IRSA local: SA prova quem e para o pod -->
+      <path id="x-irsa" class="seta" d="M183,138 L183,172"/>
+      <!-- pod -> STS: pedido de AssumeRole -->
+      <path id="x-assume" class="seta" d="M330,200 C352,200 356,196 374,196"/>
+      <!-- STS -> role de destino: confere a trust policy -->
+      <path id="x-trust" class="seta tracejada" d="M484,186 C504,170 508,132 528,118"/>
+      <!-- STS -> pod: devolve credencial da conta de destino -->
+      <path id="x-cred" class="seta" d="M374,224 C356,232 350,258 332,272"/>
+      <!-- a chamada de verdade, atravessando a fronteira -->
+      <path id="x-call" class="seta" d="M330,300 C420,300 440,232 528,225"/>
+      <!-- padrao 3: o SA fala direto com a role do destino -->
+      <path id="x-oidc" class="seta tracejada" d="M330,104 C420,74 440,92 528,100"/>
+      <!-- recurso -> KMS -->
+      <path id="x-kmsseta" class="seta" d="M677,258 L677,296"/>
+
+      <text class="cadeado" id="x-c-assume" x="352" y="186" text-anchor="middle"></text>
+      <text class="cadeado" id="x-c-trust"  x="516" y="150" text-anchor="middle"></text>
+      <text class="cadeado" id="x-c-call"   x="440" y="258" text-anchor="middle"></text>
+      <text class="cadeado" id="x-c-kms"    x="694" y="282" text-anchor="middle"></text>
+      <text class="cadeado" id="x-c-oidc"   x="430" y="78"  text-anchor="middle"></text>
+
+      <!-- o que esta em transito -->
+      <circle id="bolha-xa" r="6" fill="#e8a33d" opacity="0"/>
+      <text id="bolhaTxt-xa" class="mini" fill="#e8a33d" opacity="0"></text>
+    </svg>
+    </div><!-- /palco-xa -->
+  </div>
+
+  <div class="lateral">
+
+    <!-- ================= MODO: LOGS REAIS ================= -->
+    <div class="modo" id="lateral-logs">
+      <div class="grupo">
+        <h3>Carregar os logs do lab</h3>
+        <div class="solta" id="solta">
+          arraste aqui o <b>logs-do-lab.ndjson</b><br>
+          ou clique para escolher o arquivo
+        </div>
+        <input type="file" id="arquivo" accept=".ndjson,.json,.log,.txt" hidden>
+        <details>
+          <summary style="font-size:11.5px;color:var(--fraco);cursor:pointer">
+            ou cole o conteúdo
+          </summary>
+          <textarea id="colar" placeholder='{"ts":"...","evento":"publish.ok",...}'></textarea>
+          <button type="button" id="btnColar" style="margin-top:6px">Carregar o texto colado</button>
+        </details>
+        <div class="nota" style="margin-top:10px;padding-top:10px">
+          Gere o arquivo com <code>./run.sh exportar-logs</code>.
+          Ele junta os NDJSON dos quatro processos — publisher e os três
+          consumers, em três linguagens — que o volume compartilhado acumulou.
+          Nada sai da sua máquina: a leitura é toda no navegador.
+        </div>
+      </div>
+
+      <div class="grupo">
+        <h3>Traces</h3>
+        <div class="filtros">
+          <button type="button" class="sel" data-filtro="todos">todos</button>
+          <button type="button" data-filtro="ok">gravados</button>
+          <button type="button" data-filtro="dup">duplicatas</button>
+          <button type="button" data-filtro="dlq">falhas</button>
+        </div>
+        <div id="traces"><div class="vazio">nenhum log carregado</div></div>
+      </div>
+
+      <div class="grupo">
+        <h3>Cadeia do trace</h3>
+        <div id="cadeia"><div class="vazio">escolha um trace acima</div></div>
+      </div>
+
+      <div class="nota">
+        O <code>traceId</code> nasce no publisher, viaja como
+        <em>MessageAttribute</em> do SNS — nunca dentro do corpo, porque o
+        corpo é o que gera o hash de idempotência — e reaparece no campo
+        <code>Trace ID</code> do comprovante gravado no volume.
+        No terminal, o mesmo caminho é <code>./run.sh trace &lt;id&gt;</code>.
+      </div>
+    </div>
+
+    <!-- ================= MODO: SIMULAÇÃO ================= -->
+    <div class="modo sel" id="lateral-sim">
+    <div class="grupo">
+      <h3>Quebrar permissões</h3>
+      <label class="toggle" id="t-pub">
+        <input type="checkbox" data-quebra="publish">
+        <span>Tirar <code>sns:Publish</code> da role do publisher</span>
+      </label>
+      <label class="toggle" id="t-queue">
+        <input type="checkbox" data-quebra="queuePolicy">
+        <span>Tirar a <em>resource policy</em> da fila de baixa</span>
+      </label>
+      <label class="toggle" id="t-recv">
+        <input type="checkbox" data-quebra="receive">
+        <span>Tirar <code>sqs:ReceiveMessage</code> do worker de registro</span>
+      </label>
+      <label class="toggle" id="t-kms">
+        <input type="checkbox" data-quebra="kms">
+        <span>Remover a role da <em>key policy</em> do KMS</span>
+      </label>
+      <label class="toggle" id="t-vol">
+        <input type="checkbox" data-quebra="fsGroup">
+        <span><code>fsGroup</code> diferente do gid do Access Point</span>
+      </label>
+    </div>
+
+    <div class="grupo">
+      <h3>Resultado</h3>
+      <div class="placar">
+        <div><b id="k-pub">0</b><span>publicados</span></div>
+        <div><b id="k-proc">0</b><span>processados</span></div>
+        <div><b id="k-dlq">0</b><span>na DLQ</span></div>
+        <div><b id="k-dup">0</b><span>duplicatas</span></div>
+      </div>
+    </div>
+
+    <div class="grupo">
+      <h3>Log</h3>
+      <div id="log"><div class="l-info">aguardando…</div></div>
+    </div>
+
+    <div class="nota">
+      Cada falha simulada aqui corresponde a um sintoma real dos guias.
+      A mais instrutiva é a <em>resource policy</em>: o publish retorna sucesso,
+      a subscription aparece confirmada, e a mensagem simplesmente não chega —
+      sem erro em lugar nenhum.
+    </div>
+    </div><!-- /lateral-sim -->
+
+    <!-- ================= MODO: CROSS-ACCOUNT ================= -->
+    <div class="modo" id="lateral-xa">
+
+      <div class="grupo">
+        <h3>Como atravessar a fronteira</h3>
+        <div class="padroes" id="padroes">
+          <button type="button" class="sel" data-padrao="1">Padrão 1 — Assume role
+            <small>o worker vira principal do destino. Único caminho quando o
+              serviço não tem resource policy.</small></button>
+          <button type="button" data-padrao="2">Padrão 2 — Resource policy direta
+            <small>sem hop nenhum. Só S3, SQS, SNS, KMS, Secrets, Lambda…</small></button>
+          <button type="button" data-padrao="3">Padrão 3 — IRSA cross-account
+            <small>o pod assume a role do destino direto, sem intermediário.</small></button>
+        </div>
+      </div>
+
+      <div class="grupo">
+        <h3>Passo</h3>
+        <div class="passo" id="x-passo">
+          <div class="n">parado</div>
+          <div class="t">Escolha um padrão e execute</div>
+          <div class="d">O desenho mostra o que atravessa a fronteira e qual
+            documento é consultado em cada salto.</div>
+        </div>
+        <div class="transito" id="x-transito">
+          <b>em trânsito</b><span id="x-transito-v">nada ainda</span>
+        </div>
+      </div>
+
+      <div class="grupo">
+        <h3>Quem você é agora</h3>
+        <div class="ident origem" id="x-ident">
+          <div class="lin"><span>conta</span><span id="x-i-conta">—</span></div>
+          <div class="lin"><span>ARN</span><span id="x-i-arn">—</span></div>
+          <div class="lin"><span>chave</span><span id="x-i-chave">—</span></div>
+        </div>
+        <div class="nota" style="margin-top:8px;padding-top:8px">
+          A linha que importa é <b>conta</b>. No padrão 1 ela muda no meio do
+          caminho; no padrão 2 ela nunca muda — e é por isso que o CloudTrail do
+          destino mostra a identidade real da origem.
+        </div>
+      </div>
+
+      <div class="grupo">
+        <h3>Documento em jogo</h3>
+        <div id="x-docs"><div class="vazio">nenhum passo em execução</div></div>
+      </div>
+
+      <div class="grupo">
+        <h3>Quebrar permissões</h3>
+        <label class="toggle" id="xt-identity">
+          <input type="checkbox" data-xquebra="identityPolicy">
+          <span>Tirar <code>sts:AssumeRole</code> da identity policy <em>(origem)</em></span>
+        </label>
+        <label class="toggle" id="xt-trust">
+          <input type="checkbox" data-xquebra="trustPolicy">
+          <span>Trust policy do destino não cita a role de origem</span>
+        </label>
+        <label class="toggle" id="xt-recriada">
+          <input type="checkbox" data-xquebra="roleRecriada">
+          <span>Role de origem apagada e <b>recriada com o mesmo nome</b></span>
+        </label>
+        <label class="toggle" id="xt-arnsessao">
+          <input type="checkbox" data-xquebra="arnSessao">
+          <span>Usar o ARN da <em>sessão</em> na policy, não o da role</span>
+        </label>
+        <label class="toggle" id="xt-resource">
+          <input type="checkbox" data-xquebra="resourcePolicy">
+          <span>Resource policy do recurso sem o principal de origem</span>
+        </label>
+        <label class="toggle" id="xt-perm">
+          <input type="checkbox" data-xquebra="permission">
+          <span>Permission policy da role de destino sem a ação</span>
+        </label>
+        <label class="toggle" id="xt-key">
+          <input type="checkbox" data-xquebra="keyPolicy">
+          <span>Key policy do KMS não menciona o principal</span>
+        </label>
+      </div>
+
+      <div class="grupo">
+        <h3>Log</h3>
+        <div id="log-xa"><div class="l-info">aguardando…</div></div>
+      </div>
+
+      <div class="nota">
+        As duas quebras que mais ensinam são silenciosas. A <b>role recriada</b>
+        mantém o nome e o ARN no texto, mas a AWS guardou o ID único — a trust
+        policy passa a citar um <code>AROA…</code> que não existe mais. E o
+        <b>ARN da sessão</b> numa policy: você copia exatamente o que o
+        <code>get-caller-identity</code> mostrou, e mesmo assim não funciona.
+        No terminal, o mesmo percurso é <code>./run.sh cross-account</code>.
+      </div>
+    </div><!-- /lateral-xa -->
+
+  </div>
+</div>
+
+<script>
+const EVENTOS = ["cobranca.registrada","cobranca.baixada","cobranca.rejeitada"];
+const WORKERS = ["registro","baixa","rejeicao"];
+const quebrado = {publish:false, queuePolicy:false, receive:false, kms:false, fsGroup:false};
+const contas = {pub:0, proc:0, dlq:0, dup:0, fila:[0,0,0], comp:[0,0,0], vol:0};
+const hashesVistos = new Set();
+let ocupado = false;
+
+const $ = id => document.getElementById(id);
+const svg = document.querySelector("svg");
+
+function log(msg, tipo="info"){
+  const el = $("log");
+  if(el.children.length === 1 && el.children[0].textContent === "aguardando…") el.innerHTML = "";
+  const d = document.createElement("div");
+  d.className = "l-" + tipo;
+  d.textContent = msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+  while(el.children.length > 120) el.removeChild(el.firstChild);
+}
+
+function pintar(){
+  $("k-pub").textContent = contas.pub;
+  $("k-proc").textContent = contas.proc;
+  $("k-dlq").textContent = contas.dlq;
+  $("k-dup").textContent = contas.dup;
+  $("n-vol").textContent = contas.vol + " arquivos .txt";
+  for(let i=0;i<3;i++){
+    $("n-fila"+i).textContent = contas.fila[i] + " msg";
+    $("p-work"+i).textContent = contas.comp[i] + " comprovantes";
+  }
+  $("c-pub").textContent = quebrado.publish ? "🔒" : "";
+  $("c-q1").textContent  = quebrado.queuePolicy ? "🔒" : "";
+  $("c-w0").textContent  = quebrado.receive ? "🔒" : "";
+  document.querySelectorAll(".toggle").forEach(t=>{
+    t.classList.toggle("quebrado", t.querySelector("input").checked);
+  });
+}
+
+function acender(sel, ms=520, classe="ativa"){
+  const el = typeof sel === "string" ? $(sel) : sel;
+  if(!el) return;
+  el.classList.add(classe);
+  setTimeout(()=>el.classList.remove(classe), ms);
+}
+function acenderCaixa(id, ms=520, classe="ativa"){
+  const r = $(id)?.querySelector("rect");
+  if(r){ r.classList.add(classe); setTimeout(()=>r.classList.remove(classe), ms); }
+}
+
+function animar(d, rotulo, ms=560){
+  return new Promise(res=>{
+    const caminho = typeof d === "string" ? $(d) : d;
+    if(!caminho){ res(); return; }
+    const total = caminho.getTotalLength();
+    const bolha = $("bolha"), txt = $("bolhaTxt");
+    bolha.setAttribute("opacity","1");
+    txt.setAttribute("opacity","1");
+    txt.textContent = rotulo || "";
+    const t0 = performance.now();
+    (function passo(t){
+      const p = Math.min((t - t0)/ms, 1);
+      const pt = caminho.getPointAtLength(total * p);
+      bolha.setAttribute("cx", pt.x); bolha.setAttribute("cy", pt.y);
+      txt.setAttribute("x", pt.x + 10); txt.setAttribute("y", pt.y - 8);
+      if(p < 1) requestAnimationFrame(passo);
+      else { bolha.setAttribute("opacity","0"); txt.setAttribute("opacity","0"); res(); }
+    })(t0);
+  });
+}
+
+const espera = ms => new Promise(r=>setTimeout(r, ms));
+
+function hashFake(s){
+  let h = 0;
+  for(let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) | 0; }
+  return (h >>> 0).toString(16).toUpperCase().padStart(8,"0");
+}
+
+async function publicar(indiceForcado, payloadForcado){
+  const i = indiceForcado ?? Math.floor(Math.random()*3);
+  const evento = EVENTOS[i];
+  const nossoNumero = payloadForcado ?? String(1000000 + Math.floor(Math.random()*8999999));
+  const hash = hashFake(evento + nossoNumero);
+
+  // ---- publisher -> SNS ----
+  acenderCaixa("g-pub");
+  if(quebrado.publish){
+    acender("s-pub", 900, "negada");
+    log(`AccessDenied: sa-publisher não pode sns:Publish`, "err");
+    log(`  a role não tem a ação — guia 01 §10`, "info");
+    return;
+  }
+  await animar("s-pub", evento.split(".")[1]);
+  contas.pub++;
+  acenderCaixa("g-sns");
+  log(`publicado ${evento} nosso-numero=${nossoNumero}`, "dest");
+  pintar();
+
+  // ---- SNS roteia pela FilterPolicy ----
+  await espera(120);
+  log(`  FilterPolicy: eventType=${evento} → fila ${WORKERS[i]}`, "iam");
+
+  // ---- SNS -> SQS (resource policy da fila) ----
+  if(i === 1 && quebrado.queuePolicy){
+    acender("s-q1", 1100, "negada");
+    log(`  mensagem NÃO chegou na fila de baixa`, "err");
+    log(`  publish retornou sucesso, subscription confirmada,`, "info");
+    log(`  e nenhum erro em lugar nenhum — resource policy faltando`, "info");
+    return;
+  }
+  await animar("s-q"+i);
+  contas.fila[i]++;
+  acenderCaixa("g-fila"+i);
+  pintar();
+
+  // ---- SQS -> worker (identity policy) ----
+  await espera(160);
+  if(i === 0 && quebrado.receive){
+    acender("s-w0", 1100, "negada");
+    log(`AccessDenied: sqs:ReceiveMessage em cobranca-registro`, "err");
+    log(`  a mensagem fica na fila; após 3 tentativas vai para a DLQ`, "info");
+    contas.fila[i]--; contas.dlq++;
+    pintar();
+    return;
+  }
+
+  // ---- KMS ----
+  if(quebrado.kms){
+    acender("s-w"+i, 1100, "negada");
+    log(`AccessDenied: kms:Decrypt na chave da fila`, "err");
+    log(`  a permissão está na role — falta a KEY POLICY — guia 05 §6`, "kms");
+    contas.fila[i]--; contas.dlq++;
+    pintar();
+    return;
+  }
+
+  await animar("s-w"+i);
+  contas.fila[i]--;
+  acenderCaixa("g-work"+i);
+  pintar();
+
+  // ---- idempotência ----
+  if(hashesVistos.has(hash)){
+    contas.dup++;
+    log(`  duplicata ignorada: comprovante ${hash} já existe`, "info");
+    pintar();
+    return;
+  }
+
+  // ---- worker -> volume ----
+  if(quebrado.fsGroup){
+    acender("s-vol"+i, 1100, "negada");
+    log(`permission denied ao gravar em /data`, "err");
+    log(`  fsGroup do pod não bate com o gid do Access Point do EFS`, "info");
+    contas.dlq++;
+    pintar();
+    return;
+  }
+
+  await animar("s-vol"+i, hash.slice(0,4), 640);
+  hashesVistos.add(hash);
+  contas.proc++; contas.comp[i]++; contas.vol++;
+  acenderCaixa("g-vol");
+  log(`  comprovante gravado: ${WORKERS[i]}/${nossoNumero}-${hash}.txt`, "ok");
+  pintar();
+}
+
+async function rodar(n, duplicata){
+  if(ocupado) return;
+  ocupado = true;
+  document.querySelectorAll("#barra-sim button").forEach(b=>{ b.disabled = true; });
+  if(duplicata){
+    log("— publicando o MESMO payload duas vezes —", "info");
+    await publicar(0, "4827193");
+    await espera(260);
+    await publicar(0, "4827193");
+  } else {
+    for(let k=0;k<n;k++){ await publicar(); await espera(200); }
+  }
+  document.querySelectorAll("#barra-sim button").forEach(b=>{ b.disabled = false; });
+  ocupado = false;
+}
+
+$("btn1").onclick   = ()=>rodar(1);
+$("btn10").onclick  = ()=>rodar(10);
+$("btnDup").onclick = ()=>rodar(0, true);
+$("btnLimpar").onclick = ()=>{
+  Object.assign(contas,{pub:0,proc:0,dlq:0,dup:0,fila:[0,0,0],comp:[0,0,0],vol:0});
+  hashesVistos.clear();
+  $("log").innerHTML = '<div class="l-info">aguardando…</div>';
+  pintar();
+};
+
+document.querySelectorAll("input[data-quebra]").forEach(cb=>{
+  cb.onchange = ()=>{
+    quebrado[cb.dataset.quebra] = cb.checked;
+    log((cb.checked ? "quebrado: " : "restaurado: ") + cb.parentElement.innerText.trim(),
+        cb.checked ? "err" : "ok");
+    pintar();
+  };
+});
+
+pintar();
+
+/* ===========================================================================
+   MODO "LOGS REAIS"
+   ---------------------------------------------------------------------------
+   O mesmo desenho, alimentado pelo NDJSON que os quatro processos gravaram no
+   volume compartilhado. Nada é simulado aqui: cada seta acesa corresponde a um
+   evento que aconteceu de verdade, com o carimbo de tempo que ele registrou.
+
+   Gere o arquivo com  ./run.sh exportar-logs
+   =========================================================================== */
+
+const WORKER_INDICE = {registro:0, baixa:1, rejeicao:2};
+let traces = new Map();     // traceId -> [eventos ordenados]
+let traceSel = null;
+let filtroAtual = "todos";
+
+const $$ = s => document.querySelectorAll(s);
+
+/* --- abas ---------------------------------------------------------------- */
+$$(".aba").forEach(b=>{
+  b.onclick = ()=>{
+    const modo = b.dataset.modo;
+    $$(".aba").forEach(x=>{ x.classList.toggle("sel", x === b); });
+    $("barra-sim").classList.toggle("sel", modo === "sim");
+    $("barra-logs").classList.toggle("sel", modo === "logs");
+    $("barra-xa").classList.toggle("sel", modo === "xa");
+    $("lateral-sim").classList.toggle("sel", modo === "sim");
+    $("lateral-logs").classList.toggle("sel", modo === "logs");
+    $("lateral-xa").classList.toggle("sel", modo === "xa");
+    // O desenho do pipeline serve as DUAS primeiras abas: simulacao e logs
+    // reais sao a mesma figura com fontes de dados diferentes. So a aba de
+    // cross-account troca de palco.
+    $("palco-fluxo").classList.toggle("sel", modo !== "xa");
+    $("palco-xa").classList.toggle("sel", modo === "xa");
+    $("titulo").textContent = modo === "xa"
+      ? "conta de origem → conta de destino"
+      : "SNS → SQS → workers → volume";
+    $("subtitulo").textContent =
+      modo === "sim"  ? "Cada seta é uma chamada que o IAM autoriza ou nega. Quebre uma permissão e veja onde o fluxo para."
+    : modo === "logs" ? "Os mesmos caminhos, agora com os logs que o lab gravou de verdade. Escolha um trace e reproduza a cadeia."
+    :                   "Duas contas, três formas de atravessar. Veja qual role está em ação e qual documento é consultado a cada salto.";
+    zerarDesenho();
+  };
+});
+
+function zerarDesenho(){
+  Object.assign(contas,{pub:0,proc:0,dlq:0,dup:0,fila:[0,0,0],comp:[0,0,0],vol:0});
+  pintar();
+}
+
+/* --- carga --------------------------------------------------------------- */
+function carregar(texto){
+  const linhas = texto.split("\n").map(l=>l.trim()).filter(Boolean);
+  const eventos = [];
+  let ruins = 0;
+  for(const l of linhas){
+    try{
+      const e = JSON.parse(l);
+      if(e && e.ts && e.evento) eventos.push(e); else ruins++;
+    }catch{ ruins++; }
+  }
+  if(!eventos.length){
+    $("traces").innerHTML = '<div class="vazio">nenhum evento reconhecido no arquivo</div>';
+    $("resumoLogs").textContent = "";
+    return;
+  }
+
+  // "ts" com largura fixa faz a ordenação de texto coincidir com a
+  // cronológica — a mesma propriedade que deixa o ./run.sh trace usar `sort`.
+  eventos.sort((a,b)=> a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0);
+
+  traces = new Map();
+  for(const e of eventos){
+    if(!e.traceId) continue;               // linhas de subida do worker
+    if(!traces.has(e.traceId)) traces.set(e.traceId, []);
+    traces.get(e.traceId).push(e);
+  }
+
+  const linguagens = [...new Set(eventos.map(e=>e.linguagem).filter(Boolean))];
+  $("resumoLogs").textContent =
+    `${eventos.length} eventos · ${traces.size} traces · ${linguagens.join(", ")}` +
+    (ruins ? ` · ${ruins} linha(s) ignorada(s)` : "");
+  desenharListaTraces();
+}
+
+// O "ts" do log tem 6 casas decimais. A especificacao do ECMAScript so
+// promete 3 no Date.parse - os motores costumam aceitar mais, mas "costumam"
+// nao e contrato. Truncar aqui e uma linha e vale o seguro.
+function instante(ts){
+  const t = Date.parse(String(ts).replace(/(\.\d{3})\d+Z$/, "$1Z"));
+  return Number.isNaN(t) ? null : t;
+}
+
+function classeTrace(evs){
+  if(evs.some(e=>e.evento === "mensagem.falhou")) return "dlq";
+  if(evs.some(e=>e.evento === "comprovante.duplicado")) return "dup";
+  if(evs.some(e=>e.evento === "comprovante.gravado")) return "ok";
+  return "";
+}
+
+function duracaoMs(evs){
+  if(evs.length < 2) return 0;
+  const t0 = instante(evs[0].ts), t1 = instante(evs[evs.length-1].ts);
+  return (t0 === null || t1 === null) ? 0 : t1 - t0;
+}
+
+function desenharListaTraces(){
+  const alvo = $("traces");
+  const itens = [...traces.entries()]
+    .filter(([,evs]) => filtroAtual === "todos" || classeTrace(evs) === filtroAtual)
+    .reverse().slice(0, 60);
+
+  if(!itens.length){ alvo.innerHTML = '<div class="vazio">nenhum trace neste filtro</div>'; return; }
+
+  alvo.innerHTML = "";
+  for(const [id, evs] of itens){
+    const consumo = evs.find(e=>e.servico === "consumer") ?? evs[evs.length-1];
+    const cls = classeTrace(evs);
+    const tentativas = evs.filter(e=>e.evento === "mensagem.recebida").length;
+    const tipo = (evs.find(e=>e.tipoEvento) || {}).tipoEvento || "-";
+
+    const d = document.createElement("div");
+    d.className = "tr" + (id === traceSel ? " sel" : "");
+    d.innerHTML =
+      `<div class="id">${id.slice(0,16)}…</div>` +
+      `<div class="meta">` +
+        `<span>${tipo}</span>` +
+        `<span class="pill ${consumo.linguagem||""}">${consumo.worker||"?"} · ${consumo.linguagem||"?"}</span>` +
+        (cls ? `<span class="pill ${cls}">${
+            cls === "ok" ? "gravado" : cls === "dup" ? "duplicata" : `${tentativas}x falhou`}</span>` : "") +
+        `<span>${duracaoMs(evs)} ms</span>` +
+      `</div>`;
+    d.onclick = ()=>{ traceSel = id; desenharListaTraces(); mostrarCadeia(id); };
+    alvo.appendChild(d);
+  }
+}
+
+$$(".filtros button").forEach(b=>{
+  b.onclick = ()=>{
+    filtroAtual = b.dataset.filtro;
+    $$(".filtros button").forEach(x=>{ x.classList.toggle("sel", x === b); });
+    desenharListaTraces();
+  };
+});
+
+/* --- cadeia de um trace -------------------------------------------------- */
+function mostrarCadeia(id){
+  const evs = traces.get(id) || [];
+  const alvo = $("cadeia");
+  const t0 = evs.length ? (instante(evs[0].ts) ?? 0) : 0;
+  alvo.innerHTML = "";
+  for(const e of evs){
+    const dt = Math.max(0, (instante(e.ts) ?? t0) - t0);
+    const d = document.createElement("div");
+    d.className = "tr";
+    d.innerHTML =
+      `<div class="id" style="color:${e.nivel === "erro" ? "var(--vermelho)"
+        : e.evento === "comprovante.gravado" ? "var(--verde)" : "var(--ambar)"}">` +
+      `+${String(dt).padStart(4)} ms  ${e.evento}</div>` +
+      `<div class="meta"><span>${e.worker}/${e.linguagem}</span></div>` +
+      `<div style="color:var(--fraco);margin-top:2px;word-break:break-word">${
+        (e.msg||"").replace(/[<>&]/g, c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]))}</div>`;
+    alvo.appendChild(d);
+  }
+  if(!evs.length) alvo.innerHTML = '<div class="vazio">trace sem eventos</div>';
+}
+
+/* --- reprodução no desenho ----------------------------------------------- */
+async function reproduzir(){
+  if(!traceSel || ocupado) return;
+  const evs = traces.get(traceSel) || [];
+  if(!evs.length) return;
+
+  ocupado = true;
+  $$("#barra-logs button").forEach(b=>{ b.disabled = true; });
+  zerarDesenho();
+  log(`— reproduzindo o trace ${traceSel.slice(0,16)}… —`, "info");
+
+  // Descobre qual das três raias esta cadeia usou. Em log real o índice vem
+  // do worker que consumiu, não de um sorteio.
+  const consumo = evs.find(e=>e.servico === "consumer");
+  const i = WORKER_INDICE[consumo?.worker] ?? 1;
+
+  for(const e of evs){
+    switch(e.evento){
+      case "publish.ok":
+        acenderCaixa("g-pub");
+        await animar("s-pub", (e.tipoEvento||"").split(".")[1] || "");
+        contas.pub++; acenderCaixa("g-sns"); pintar();
+        log(`publish.ok  ${e.msg}`, "dest");
+        await animar("s-q"+i);
+        contas.fila[i]++; acenderCaixa("g-fila"+i); pintar();
+        break;
+
+      case "mensagem.recebida":
+        await animar("s-w"+i);
+        contas.fila[i] = Math.max(0, contas.fila[i]-1);
+        acenderCaixa("g-work"+i); pintar();
+        log(`mensagem.recebida  tentativa ${e.tentativa||"1"}  (${e.worker}/${e.linguagem})`, "iam");
+        break;
+
+      case "comprovante.gravado":
+        await animar("s-vol"+i, (e.hash||"").slice(0,4), 640);
+        contas.proc++; contas.comp[i]++; contas.vol++;
+        acenderCaixa("g-vol"); pintar();
+        log(`comprovante.gravado  ${e.caminho||""}`, "ok");
+        break;
+
+      case "comprovante.duplicado":
+        contas.dup++; pintar();
+        log(`comprovante.duplicado  ${e.msg}`, "info");
+        break;
+
+      case "mensagem.falhou":
+        acender("s-vol"+i, 900, "negada");
+        log(`mensagem.falhou  ${e.msg}`, "err");
+        await espera(240);
+        break;
+
+      case "mensagem.deletada":
+        log("mensagem.deletada  saiu da fila", "info");
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  const falhas = evs.filter(e=>e.evento === "mensagem.falhou").length;
+  if(falhas >= 3){
+    contas.dlq++; pintar();
+    log(`${falhas} tentativas falharam → a mensagem foi para a DLQ`, "err");
+    log("as três tentativas têm o MESMO trace: ele foi derivado do", "info");
+    log("MessageId, não sorteado — guia 07 §6", "info");
+  }
+
+  $$("#barra-logs button").forEach(b=>{ b.disabled = false; });
+  ocupado = false;
+}
+
+/* --- entrada de arquivo -------------------------------------------------- */
+const solta = $("solta");
+solta.onclick = ()=> $("arquivo").click();
+$("arquivo").onchange = ev=>{
+  const f = ev.target.files[0];
+  if(f) f.text().then(carregar);
+};
+["dragenter","dragover"].forEach(n=>solta.addEventListener(n, ev=>{
+  ev.preventDefault(); solta.classList.add("sobre");
+}));
+["dragleave","drop"].forEach(n=>solta.addEventListener(n, ev=>{
+  ev.preventDefault(); solta.classList.remove("sobre");
+}));
+solta.addEventListener("drop", ev=>{
+  const f = ev.dataTransfer.files[0];
+  if(f) f.text().then(carregar);
+});
+/* ===========================================================================
+   MODO "CROSS-ACCOUNT"
+   ---------------------------------------------------------------------------
+   As outras duas abas mostram UMA conta. Esta mostra duas, porque quase tudo
+   que da errado entre contas vem de um mal-entendido sobre onde cada
+   documento mora.
+
+   A narrativa e a mesma do guia 02 secao 2 e a mesma do ./run.sh
+   cross-account: as mesmas contas, as mesmas roles, os mesmos JSONs. Quem
+   rodou o exercicio no terminal reconhece cada linha aqui.
+
+   Tres coisas mudam a cada passo, e sao as tres que o painel mostra:
+     1. o que esta EM TRANSITO   (o JWT, o pedido, a credencial, o dado)
+     2. QUEM VOCE E naquele instante (conta + ARN + prefixo da chave)
+     3. QUAL DOCUMENTO decide     (e em qual das duas contas ele mora)
+   =========================================================================== */
+
+const XA = {
+  ORIGEM:  "111122223333",
+  DESTINO: "444455556666",
+  ROLE_O:  "asa-prd-cash-cobranca-consumer-registro",
+  ROLE_D:  "asa-prd-dados-gravador-comprovantes",
+  SESSAO:  "cobranca-registro",
+  FILA:    "auditoria-comprovantes",
+};
+const arnRoleO   = `arn:aws:iam::${XA.ORIGEM}:role/${XA.ROLE_O}`;
+const arnRoleD   = `arn:aws:iam::${XA.DESTINO}:role/${XA.ROLE_D}`;
+const arnSessO   = `arn:aws:sts::${XA.ORIGEM}:assumed-role/${XA.ROLE_O}/${XA.SESSAO}`;
+const arnSessD   = `arn:aws:sts::${XA.DESTINO}:assumed-role/${XA.ROLE_D}/${XA.SESSAO}`;
+const arnFila    = `arn:aws:sqs:us-east-1:${XA.DESTINO}:${XA.FILA}`;
+// O que a AWS guarda quando voce nomeia uma role no Principal: o ID unico,
+// nao o texto. Apagar e recriar a role com o mesmo nome troca esse ID.
+const AROA_MORTO = "AROA1EXAMPLEIDANTIGO";
+
+const xquebrado = {
+  identityPolicy:false, trustPolicy:false, roleRecriada:false,
+  arnSessao:false, resourcePolicy:false, permission:false, keyPolicy:false,
+};
+
+// Quais quebras fazem sentido em cada padrao. As que nao fazem aparecem
+// apagadas com o motivo - saber que uma quebra NAO se aplica aqui ensina
+// tanto quanto ve-la quebrar.
+const XA_APLICAVEIS = {
+  1: ["identityPolicy","trustPolicy","roleRecriada","arnSessao","permission","keyPolicy"],
+  2: ["resourcePolicy","roleRecriada","arnSessao","keyPolicy"],
+  3: ["trustPolicy","permission","keyPolicy"],
+};
+const XA_ROTULO_TOGGLE = {
+  identityPolicy:"xt-identity", trustPolicy:"xt-trust", roleRecriada:"xt-recriada",
+  arnSessao:"xt-arnsessao", resourcePolicy:"xt-resource", permission:"xt-perm",
+  keyPolicy:"xt-key",
+};
+
+let xPadrao = 1, xLista = [], xIndice = 0, xMsgs = 0;
+
+function logX(msg, tipo="info"){
+  const el = $("log-xa");
+  if(el.children.length === 1 && el.children[0].textContent === "aguardando…") el.innerHTML = "";
+  const d = document.createElement("div");
+  d.className = "l-" + tipo;
+  d.textContent = msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+  while(el.children.length > 120) el.removeChild(el.firstChild);
+}
+
+// Mesma mecanica do animar() do pipeline, com a bolha desta aba.
+function animarX(idCaminho, rotulo, ms=620){
+  return new Promise(res=>{
+    const caminho = $(idCaminho);
+    if(!caminho){ res(); return; }
+    const total = caminho.getTotalLength();
+    const bolha = $("bolha-xa"), txt = $("bolhaTxt-xa");
+    bolha.setAttribute("opacity","1");
+    txt.setAttribute("opacity","1");
+    txt.textContent = rotulo || "";
+    const t0 = performance.now();
+    (function passo(t){
+      const p = Math.min((t - t0)/ms, 1);
+      const pt = caminho.getPointAtLength(total * p);
+      bolha.setAttribute("cx", pt.x); bolha.setAttribute("cy", pt.y);
+      txt.setAttribute("x", pt.x + 10); txt.setAttribute("y", pt.y - 8);
+      if(p < 1) requestAnimationFrame(passo);
+      else { bolha.setAttribute("opacity","0"); txt.setAttribute("opacity","0"); res(); }
+    })(t0);
+  });
+}
+
+/* --- os documentos, escritos como estao no guia 02 ----------------------- */
+
+function docIdentityAssume(){
+  const morto = xquebrado.identityPolicy;
+  return {
+    titulo:"identity policy", conta:"origem", tag:XA.ORIGEM,
+    pergunta:"esta role pode PEDIR para assumir aquela outra?",
+    quebrado:morto,
+    json: morto
+      ? `{
+  "Statement": []
+}
+// sem statement para sts:AssumeRole`
+      : `{
+  "Effect": "Allow",
+  "Action": "sts:AssumeRole",
+  "Resource":
+    "${arnRoleD}"
+}`,
+  };
+}
+
+function docIdentityDireta(){
+  return {
+    titulo:"identity policy", conta:"origem", tag:XA.ORIGEM,
+    pergunta:"a role pode chamar a ação naquele ARN de outra conta?",
+    quebrado:false,
+    json:`{
+  "Effect": "Allow",
+  "Action": "sqs:SendMessage",
+  "Resource":
+    "${arnFila}"
+}`,
+  };
+}
+
+// O principal da trust policy e onde as tres quebras silenciosas aparecem.
+function principalDaOrigem(){
+  if(xquebrado.roleRecriada) return AROA_MORTO;
+  if(xquebrado.arnSessao)    return arnSessO;
+  if(xquebrado.trustPolicy)  return `arn:aws:iam::${XA.ORIGEM}:role/outra-role-qualquer`;
+  return arnRoleO;
+}
+
+function docTrust(){
+  const p = principalDaOrigem();
+  return {
+    titulo:"trust policy", conta:"destino", tag:XA.DESTINO,
+    pergunta:"quem, lá de fora, eu aceito que me assuma?",
+    quebrado: p !== arnRoleO,
+    json:`{
+  "Effect": "Allow",
+  "Principal": {
+    "AWS": "${p}"
+  },
+  "Action": "sts:AssumeRole"
+}`,
+  };
+}
+
+function docTrustFederado(){
+  const morto = xquebrado.trustPolicy;
+  const sub = morto ? "system:serviceaccount:cash:sa-OUTRO"
+                    : "system:serviceaccount:cash:sa-consumer-registro";
+  return {
+    titulo:"trust policy (federated)", conta:"destino", tag:XA.DESTINO,
+    pergunta:"aceito o OIDC daquele cluster, e qual ServiceAccount dele?",
+    quebrado:morto,
+    json:`{
+  "Principal": { "Federated":
+    "arn:aws:iam::${XA.DESTINO}:oidc-provider/
+     oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE" },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": { "StringEquals": {
+    "…:sub": "${sub}"
+  }}
+}`,
+  };
+}
+
+function docResource(){
+  const p = xquebrado.resourcePolicy ? "arn:aws:iam::999988887777:root"
+          : xquebrado.roleRecriada   ? AROA_MORTO
+          : xquebrado.arnSessao      ? arnSessO
+          : arnRoleO;
+  return {
+    titulo:"resource policy da fila", conta:"destino", tag:XA.DESTINO,
+    pergunta:"aceito um principal de outra conta chamando direto?",
+    quebrado: p !== arnRoleO,
+    json:`{
+  "Effect": "Allow",
+  "Principal": {
+    "AWS": "${p}"
+  },
+  "Action": "sqs:SendMessage",
+  "Resource": "${arnFila}"
+}`,
+  };
+}
+
+function docPermission(){
+  const morto = xquebrado.permission;
+  return {
+    titulo:"permission policy", conta:"destino", tag:XA.DESTINO,
+    pergunta:"depois de assumida, o que ela faz?",
+    quebrado:morto,
+    json: morto
+      ? `{
+  "Effect": "Allow",
+  "Action": "sqs:ReceiveMessage",
+  "Resource": "${arnFila}"
+}
+// falta sqs:SendMessage`
+      : `{
+  "Effect": "Allow",
+  "Action": "sqs:SendMessage",
+  "Resource": "${arnFila}"
+}`,
+  };
+}
+
+function docKey(){
+  const morto = xquebrado.keyPolicy;
+  const principal = xPadrao === 2 ? arnRoleO : arnRoleD;
+  return {
+    titulo:"key policy do KMS", conta:"destino", tag:XA.DESTINO,
+    pergunta:"este principal pode usar a chave? (obrigatória, não opcional)",
+    quebrado:morto,
+    json: morto
+      ? `{
+  "Principal": {
+    "AWS": "arn:aws:iam::${XA.DESTINO}:root"
+  },
+  "Action": "kms:*"
+}
+// nenhum bloco cita o principal que chamou`
+      : `{
+  "Effect": "Allow",
+  "Principal": {
+    "AWS": "${principal}"
+  },
+  "Action": [
+    "kms:GenerateDataKey", "kms:Encrypt"
+  ]
+}`,
+  };
+}
+
+/* --- os passos de cada padrao -------------------------------------------- */
+
+const IDENT_JWT = {conta:"—", arn:"ainda nenhuma credencial AWS", chave:"só o JWT do projected volume", lado:"origem"};
+const IDENT_ORIG = {conta:XA.ORIGEM, arn:arnSessO, chave:"ASIA… (temporária, conta de origem)", lado:"origem"};
+const IDENT_DEST = {conta:XA.DESTINO, arn:arnSessD, chave:"ASIA… (temporária, conta de destino)", lado:"destino", mudou:true};
+
+function passosDe(padrao){
+  const irsa = {
+    titulo:"O pod prova quem é (IRSA)",
+    desc:"O kubelet montou um JWT assinado pelo provedor OIDC do cluster. Nada de AWS aconteceu ainda.",
+    seta:"x-irsa", rotulo:"JWT", transito:"JWT do ServiceAccount (projected volume)",
+    ident:IDENT_JWT, docs:[], caixa:"x-pod",
+    log:["o kubelet injetou AWS_ROLE_ARN e o caminho do token","o token é RELIDO a cada renovação, nunca cacheado"],
+  };
+  const kms = {
+    titulo:"A chave KMS entra na conversa",
+    desc:"A fila é criptografada. A key policy é o terceiro documento — e é obrigatória: ter kms:Encrypt na role não basta.",
+    seta:"x-kmsseta", rotulo:"GenerateDataKey", transito:"kms:GenerateDataKey na chave do time de dados",
+    docs:[docKey], caixa:"x-kms", cadeado:"x-c-kms",
+    falhaSe:()=>xquebrado.keyPolicy,
+    erro:["AccessDenied: kms:GenerateDataKey na chave do destino",
+          "  e a permissão ESTÁ na role, correta. Falta a menção na KEY POLICY.",
+          "  sempre que 'kms:' aparecer num erro cross-account, confira a key policy"],
+  };
+  const gravou = {
+    titulo:"Gravado na conta de destino",
+    desc:"A travessia terminou. Repare em quem consta como autor da chamada — é o que o CloudTrail do destino vai registrar.",
+    seta:null, sucesso:true, transito:"comprovante entregue",
+    docs:[], caixa:"x-rec",
+  };
+
+  if(padrao === 1) return [
+    irsa,
+    {
+      titulo:"O worker pede para assumir a role do destino",
+      desc:"Primeira das duas verificações. A conta de ORIGEM precisa permitir que a role peça.",
+      seta:"x-assume", rotulo:"AssumeRole", transito:`sts:AssumeRole(${XA.ROLE_D})`,
+      ident:IDENT_ORIG, docs:[docIdentityAssume], caixa:"x-sts", cadeado:"x-c-assume",
+      falhaSe:()=>xquebrado.identityPolicy,
+      erro:["AccessDenied: não autorizado a sts:AssumeRole",
+            "  falhou na ORIGEM — a role nem chegou a bater na porta do destino"],
+    },
+    {
+      titulo:"O STS confere a trust policy do destino",
+      desc:"Segunda verificação, e do outro lado da fronteira. Nenhuma conta se auto-concede acesso à outra.",
+      seta:"x-trust", rotulo:"trust?", transito:"o STS lê a trust policy da role de destino",
+      docs:[docTrust], caixa:"x-roled", cadeado:"x-c-trust",
+      falhaSe:()=> principalDaOrigem() !== arnRoleO,
+      erro:()=> xquebrado.roleRecriada
+        ? ["AccessDenied: não autorizado a executar sts:AssumeRole",
+           "  o Principal virou AROA1EXAMPLE… — a role foi apagada e recriada",
+           "  o NOME é o mesmo, o ID único não. A trust policy quebrou em silêncio."]
+        : xquebrado.arnSessao
+        ? ["MalformedPolicyDocument / AccessDenied",
+           "  o Principal tem o ARN da SESSÃO (sts:…assumed-role/…)",
+           "  policy referencia a ROLE (iam:…role/X). Foi o que você copiou do",
+           "  get-caller-identity — e é exatamente o que não serve."]
+        : ["AccessDenied: a trust policy não cita esta role de origem",
+           "  o lado do destino não concordou — guia 02 §2"],
+    },
+    {
+      titulo:"O STS devolve credenciais da conta de destino",
+      desc:"Aqui a identidade troca de conta. Você não É a role: você é uma SESSÃO dela.",
+      seta:"x-cred", rotulo:"ASIA…", transito:"AccessKeyId ASIA… + SessionToken (expira em 1h)",
+      ident:IDENT_DEST, docs:[], caixa:"x-pod",
+      log:["ASIA… = temporária, do STS. AKIA… seria permanente — errado num pod.",
+           "em role chaining a sessão dura no máximo 1h, mesmo que a role permita 12h"],
+    },
+    {
+      titulo:"A chamada, já como principal do destino",
+      desc:"O worker age com identidade da conta de destino. No CloudTrail de lá aparece a role de destino, não a de origem.",
+      seta:"x-call", rotulo:"SendMessage", transito:`{"evento":"comprovante.gravado"} → ${XA.FILA}`,
+      docs:[docPermission], caixa:"x-rec", cadeado:"x-c-call",
+      falhaSe:()=>xquebrado.permission,
+      erro:["AccessDenied: sqs:SendMessage na fila de auditoria",
+            "  a travessia funcionou; a role assumida é que não pode a ação"],
+    },
+    kms, gravou,
+  ];
+
+  if(padrao === 2) return [
+    irsa,
+    {
+      titulo:"A chamada sai direto, sem AssumeRole nenhum",
+      desc:"Não há hop. O worker chama com a credencial dele mesmo — repare que a conta NÃO muda no painel acima.",
+      seta:"x-call", rotulo:"SendMessage", transito:`{"evento":"comprovante.gravado"} → ${XA.FILA}`,
+      ident:IDENT_ORIG, docs:[docIdentityDireta], caixa:"x-rec", cadeado:"x-c-call",
+      log:["o STS ficou de fora deste padrão — nenhuma credencial nova foi emitida"],
+    },
+    {
+      titulo:"O recurso avalia a própria resource policy",
+      desc:"O outro lado da regra dos dois lados. Aqui quem concorda é o recurso, não uma role.",
+      seta:null, transito:"a fila lê a própria policy",
+      docs:[docResource], caixa:"x-rec",
+      falhaSe:()=> xquebrado.resourcePolicy || xquebrado.roleRecriada || xquebrado.arnSessao,
+      erro:()=> xquebrado.roleRecriada
+        ? ["AccessDenied: sqs:SendMessage",
+           "  o Principal guardado virou AROA1EXAMPLE… — role recriada com o mesmo nome"]
+        : xquebrado.arnSessao
+        ? ["AccessDenied: sqs:SendMessage",
+           "  o Principal tem o ARN da sessão, e policy precisa do ARN da role"]
+        : ["AccessDenied: sqs:SendMessage",
+           "  a resource policy não cita o principal da conta de origem",
+           "  a identity policy da origem estava certa — faltou o outro lado"],
+    },
+    kms,
+    {...gravou,
+      desc:"Sem hop intermediário: no CloudTrail do destino aparece a identidade REAL da origem. É a vantagem de auditoria deste padrão.",
+    },
+  ];
+
+  return [
+    {...irsa, desc:"Mesmo começo: o JWT do ServiceAccount. A diferença vem no próximo passo."},
+    {
+      titulo:"AssumeRoleWithWebIdentity direto na role do destino",
+      desc:"O provedor OIDC do cluster foi registrado DENTRO da conta de destino. Não há role intermediária na origem.",
+      seta:"x-oidc", rotulo:"JWT", transito:"JWT do ServiceAccount → role da conta de destino",
+      docs:[docTrustFederado], caixa:"x-roled", cadeado:"x-c-oidc",
+      falhaSe:()=>xquebrado.trustPolicy,
+      erro:["Not authorized to perform sts:AssumeRoleWithWebIdentity",
+            "  a condição :sub não bate com este ServiceAccount",
+            "  a granularidade aqui é o SA — é o que o role chaining perde"],
+    },
+    {
+      titulo:"Credenciais do destino, sem hop intermediário",
+      desc:"Uma chamada ao STS em vez de duas, e a identidade já nasce na conta de destino.",
+      seta:"x-cred", rotulo:"ASIA…", transito:"AccessKeyId ASIA… + SessionToken",
+      ident:IDENT_DEST, docs:[], caixa:"x-pod",
+      log:["o custo deste padrão: registrar o provedor OIDC em CADA conta de destino"],
+    },
+    {
+      titulo:"A chamada no recurso",
+      desc:"Daqui em diante é igual ao padrão 1.",
+      seta:"x-call", rotulo:"SendMessage", transito:`{"evento":"comprovante.gravado"} → ${XA.FILA}`,
+      docs:[docPermission], caixa:"x-rec", cadeado:"x-c-call",
+      falhaSe:()=>xquebrado.permission,
+      erro:["AccessDenied: sqs:SendMessage na fila de auditoria"],
+    },
+    kms, gravou,
+  ];
+}
+
+/* --- pintura do painel --------------------------------------------------- */
+
+function xPintarIdent(id){
+  if(!id) return;
+  $("x-i-conta").innerHTML = id.mudou
+    ? `<span class="mud">${id.conta}</span> ← mudou`
+    : id.conta;
+  $("x-i-arn").textContent   = id.arn;
+  $("x-i-chave").textContent = id.chave;
+  $("x-ident").className = "ident " + (id.lado || "origem");
+}
+
+function xPintarDocs(docs, houveFalha){
+  const alvo = $("x-docs");
+  if(!docs || !docs.length){
+    alvo.innerHTML = '<div class="vazio">nenhum documento decide este passo</div>';
+    return;
+  }
+  alvo.innerHTML = "";
+  for(const fn of docs){
+    const d = fn();
+    const div = document.createElement("div");
+    div.className = "doc " + d.conta + ((d.quebrado && houveFalha) ? " negado" : "");
+    const cab = document.createElement("h4");
+    cab.innerHTML = `<span>${d.titulo}</span><em>mora em ${d.tag}</em>`;
+    const q = document.createElement("div");
+    q.className = "q"; q.textContent = d.pergunta;
+    const pre = document.createElement("pre");
+    pre.textContent = d.json;
+    div.append(cab, q, pre);
+    alvo.appendChild(div);
+  }
+}
+
+function xPintarPasso(p, n, total, estado){
+  $("x-passo").innerHTML =
+    `<div class="n">${estado || `passo ${n} de ${total}`}</div>` +
+    `<div class="t">${p.titulo}</div>` +
+    `<div class="d">${p.desc}</div>`;
+}
+
+function xPintarPadrao(){
+  // setas de cada padrao: o que nao participa fica apagado em vez de sumir,
+  // para o aluno ver o que ESTE padrao deixou de usar.
+  const usadas = {
+    1:["x-irsa","x-assume","x-trust","x-cred","x-call","x-kmsseta"],
+    2:["x-irsa","x-call","x-kmsseta"],
+    3:["x-irsa","x-oidc","x-cred","x-call","x-kmsseta"],
+  }[xPadrao];
+  for(const id of ["x-irsa","x-assume","x-trust","x-cred","x-call","x-kmsseta","x-oidc"]){
+    $(id)?.classList.toggle("apagada", !usadas.includes(id));
+  }
+  const stsRect = $("x-sts")?.querySelector("rect");
+  if(stsRect) stsRect.classList.toggle("apagada", xPadrao === 2);
+
+  $("x-doc-o").textContent = xPadrao === 3
+    ? "0 documentos — o destino confia no OIDC direto"
+    : "1 documento: identity policy";
+  $("x-doc-d").textContent = xPadrao === 2
+    ? "2 documentos: resource policy + key policy"
+    : "3 documentos: trust + permission + key policy";
+
+  // quebras que nao se aplicam a este padrao
+  const ok = XA_APLICAVEIS[xPadrao];
+  for(const [chave, idRot] of Object.entries(XA_ROTULO_TOGGLE)){
+    const rot = $(idRot);
+    if(!rot) continue;
+    const aplica = ok.includes(chave);
+    rot.classList.toggle("inerte", !aplica);
+    rot.querySelector("input").disabled = !aplica;
+    let aviso = rot.querySelector(".naoaplica");
+    if(!aplica){
+      if(!aviso){
+        aviso = document.createElement("span");
+        aviso.className = "naoaplica";
+        rot.querySelector("span").appendChild(aviso);
+      }
+      aviso.textContent = `não se aplica ao padrão ${xPadrao}`;
+    } else if(aviso){ aviso.remove(); }
+  }
+  document.querySelectorAll("#lateral-xa .toggle").forEach(t=>{
+    t.classList.toggle("quebrado", t.querySelector("input").checked && !t.classList.contains("inerte"));
+  });
+}
+
+function xLimparCadeados(){
+  for(const id of ["x-c-assume","x-c-trust","x-c-call","x-c-kms","x-c-oidc"]){
+    if($(id)) $(id).textContent = "";
+  }
+}
+
+function xZerar(silencioso){
+  xLista = passosDe(xPadrao);
+  xIndice = 0; xMsgs = 0;
+  $("x-n-rec").textContent = "0 mensagens";
+  xLimparCadeados();
+  xPintarIdent({conta:"—", arn:"—", chave:"—", lado:"origem"});
+  xPintarDocs([], false);
+  $("x-transito-v").textContent = "nada ainda";
+  $("x-passo").innerHTML =
+    '<div class="n">parado</div>' +
+    `<div class="t">Padrão ${xPadrao} — ${xLista.length} passos</div>` +
+    '<div class="d">Use “Executar a travessia” para ver tudo, ou “Passo a passo” para parar em cada documento.</div>';
+  xPintarPadrao();
+  if(!silencioso) $("log-xa").innerHTML = '<div class="l-info">aguardando…</div>';
+}
+
+/* --- execucao ------------------------------------------------------------ */
+
+async function xUmPasso(){
+  if(xIndice >= xLista.length) return false;
+  const p = xLista[xIndice];
+  const n = xIndice + 1;
+
+  const falhou = typeof p.falhaSe === "function" && p.falhaSe();
+  xPintarPasso(p, n, xLista.length, falhou ? "negado" : null);
+  if(p.ident) xPintarIdent(p.ident);
+  xPintarDocs(p.docs, falhou);
+  $("x-transito-v").textContent = p.transito || "—";
+
+  if(falhou){
+    if(p.cadeado && $(p.cadeado)) $(p.cadeado).textContent = "🔒";
+    if(p.seta) acender(p.seta, 1200, "negada");
+    const linhas = typeof p.erro === "function" ? p.erro() : (p.erro || []);
+    linhas.forEach((l,k)=>{ logX(l, k === 0 ? "err" : "info"); });
+    xIndice = xLista.length;   // a cadeia para aqui, como na AWS
+    return false;
+  }
+
+  if(p.seta){
+    acender(p.seta, 900, "ativa");
+    await animarX(p.seta, p.rotulo);
+  }
+  if(p.caixa) acenderCaixa(p.caixa, 700);
+  logX(`${n}. ${p.titulo}`, p.sucesso ? "ok" : "dest");
+  (p.log || []).forEach(l=>{ logX(`   ${l}`, "iam"); });
+
+  if(p.sucesso){
+    xMsgs++;
+    $("x-n-rec").textContent = xMsgs + (xMsgs === 1 ? " mensagem" : " mensagens");
+    if(xPadrao === 2){
+      logX("   no CloudTrail do destino: " + XA.ROLE_O, "kms");
+      logX("   (a identidade REAL da origem — vantagem do padrão 2)", "info");
+    } else {
+      logX("   no CloudTrail do destino: " + XA.ROLE_D, "kms");
+      logX("   a origem só é rastreável no evento AssumeRole da outra conta", "info");
+    }
+  }
+
+  xIndice++;
+  return xIndice < xLista.length;
+}
+
+async function xTudo(){
+  if(ocupado) return;
+  ocupado = true;
+  document.querySelectorAll("#barra-xa button").forEach(b=>{ b.disabled = true; });
+  if(xIndice >= xLista.length) xZerar(true);
+  logX(`— padrão ${xPadrao}: executando a travessia —`, "info");
+  let resta = true;
+  while(resta){ resta = await xUmPasso(); await espera(260); }
+  document.querySelectorAll("#barra-xa button").forEach(b=>{ b.disabled = false; });
+  ocupado = false;
+}
+
+async function xPasso(){
+  if(ocupado) return;
+  ocupado = true;
+  document.querySelectorAll("#barra-xa button").forEach(b=>{ b.disabled = true; });
+  if(xIndice >= xLista.length) xZerar(true);
+  await xUmPasso();
+  document.querySelectorAll("#barra-xa button").forEach(b=>{ b.disabled = false; });
+  ocupado = false;
+}
+
+$("btnXaTudo").onclick  = xTudo;
+$("btnXaPasso").onclick = xPasso;
+$("btnXaZerar").onclick = ()=> xZerar(false);
+
+document.querySelectorAll("#padroes button").forEach(b=>{
+  b.onclick = ()=>{
+    if(ocupado) return;
+    xPadrao = Number(b.dataset.padrao);
+    document.querySelectorAll("#padroes button").forEach(x=>{ x.classList.toggle("sel", x === b); });
+    xZerar(true);
+    logX(`— padrão ${xPadrao} selecionado —`, "info");
+  };
+});
+
+document.querySelectorAll("input[data-xquebra]").forEach(cb=>{
+  cb.onchange = ()=>{
+    xquebrado[cb.dataset.xquebra] = cb.checked;
+    logX((cb.checked ? "quebrado: " : "restaurado: ") + cb.parentElement.innerText.trim().split("\n")[0],
+         cb.checked ? "err" : "ok");
+    // A cadeia muda de forma quando uma policy muda: recomeca do zero.
+    xZerar(true);
+  };
+});
+
+xZerar(true);
+
+$("btnColar").onclick = ()=> carregar($("colar").value);
+$("btnReplay").onclick = reproduzir;
+$("btnLimparLogs").onclick = ()=>{
+  traces = new Map(); traceSel = null;
+  $("traces").innerHTML = '<div class="vazio">nenhum log carregado</div>';
+  $("cadeia").innerHTML = '<div class="vazio">escolha um trace acima</div>';
+  $("resumoLogs").textContent = "";
+  $("log").innerHTML = '<div class="l-info">aguardando…</div>';
+  zerarDesenho();
+};
+</script>
+</body>
+</html>
