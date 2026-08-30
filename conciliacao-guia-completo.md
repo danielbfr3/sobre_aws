@@ -166,12 +166,14 @@ sequenceDiagram
     S-->>C: Retorno parcial 2 - itens X e Y liquidaram, Z rejeitou
 
     Note over S,C: Quando todos os itens da remessa<br/>chegam a estado terminal:
-    S-->>C: Retorno consolidado<br/>foto completa da remessa
+    S-->>C: Encerramento de remessa<br/>foto completa quando o ultimo item fecha
 ```
 
 Repare em duas coisas:
 
-- O cliente recebe **vários** retornos parciais e **um** consolidado.
+- O cliente recebe **vários** retornos parciais e, no fim, um retorno de
+  encerramento. Cuidado com a palavra "consolidado" aqui: a seção 7.3 mostra que
+  ela costuma significar duas coisas diferentes.
 - Existe um estado (`Processando`) que o cliente nunca vê. Isso é deliberado.
 
 ---
@@ -1055,36 +1057,177 @@ ORDER BY p.ArquivoID, p.NumeroLote;
 dentro da mesma janela, o retorno leva apenas o 6. O CNAB é foto de ocorrência,
 não log de auditoria.
 
-### 7.3 Retorno consolidado
+### 7.3 "Consolidado" são dois conceitos diferentes
 
-Critério diferente: é a foto completa de **um arquivo de remessa**, e ignora
-tanto a janela quanto o que já foi reportado. Todo item da remessa entra, no
-estado em que está.
+Esta é a armadilha de vocabulário mais cara do domínio, e ela costuma aparecer
+tarde: **duas coisas distintas são chamadas de consolidado**, e a equipe que
+define a regra raramente é a mesma que a implementa.
 
-```sql
-SELECT p.BoletoID, p.CodigoStatus, p.NumeroLote
-FROM   Pagamento.Boleto p
-WHERE  p.ArquivoID = @arquivoRemessaId
-ORDER BY p.NumeroLote, p.BoletoID;
-```
-
-A pergunta difícil é *quando* gerar:
-
-| Gatilho | A favor | Contra |
+| | **Fechamento diário** | **Encerramento de remessa** |
 |---|---|---|
-| **Quando fecha** (nenhum item em estado transitório) | É o consolidado "de verdade" | Pode nunca chegar se um item travar |
-| **Por prazo** (D+n da remessa) | Sempre entrega | Pode consolidar coisa em movimento |
+| Gatilho | horário fixo, ex. 18h | último item vira terminal |
+| Escopo | tudo do dia, do cliente | uma remessa específica |
+| Quando ocorre | previsível | imprevisível, pode ser D+3 |
+| Serve para | conciliação contábil do dia | encerrar o ciclo daquele envio |
+| Pode ter item pendente? | **sim, por definição** | **não, por definição** |
 
-Na prática você precisa dos dois: gera quando fecha, e tem um prazo-limite que
-força a geração com alerta para o que ficou pendente.
+Uma regra como *"parciais de hora em hora das 8h às 18h e um consolidado às 18h"*
+descreve o **fechamento diário**. E ela é perfeitamente válida — desde que
+ninguém interprete o arquivo das 18h como "a remessa acabou".
+
+**Por que não dá para prometer completude num horário fixo:** basta a remessa ter
+entrado às 17h30, conter TED depois do horário de corte, ou boleto com liquidação
+em D+1. O arquivo das 18h vai sair com itens em trânsito, e isso não é defeito —
+é a natureza do prazo de liquidação. Prometer o contrário no nome do arquivo é
+que é o problema.
+
+**O risco concreto do nome errado.** O cliente lê "consolidado", conclui que
+aquilo é a versão final, arquiva e fecha o mês. Quando a ocorrência do item
+pendente chega no parcial do dia seguinte, ele já não está mais olhando. O
+prejuízo aparece na conciliação **dele**, semanas depois, e volta como chamado
+para vocês.
+
+#### Os três tipos, coexistindo
+
+```csharp
+public enum TipoRetorno : short
+{
+    /// <summary>Incremental: só o que mudou desde a última janela.</summary>
+    Parcial = 1,
+
+    /// <summary>Foto do dia, em horário fixo. PODE conter itens em trânsito.</summary>
+    FechamentoDiario = 2,
+
+    /// <summary>Uma remessa inteira, disparado quando o último item vira terminal.
+    /// É o único que pode prometer completude.</summary>
+    EncerramentoRemessa = 3
+}
+```
+
+**Parcial** — de hora em hora, como já é hoje. Não gere arquivo quando não houver
+nada elegível: consome NSA e vira ticket de suporte.
+
+**Fechamento diário** — horário fixo. Documente explicitamente no manual de
+integração que ele pode conter pendências e que o ciclo continua no dia seguinte.
+
+**Encerramento de remessa** — por evento, com prazo-limite. É o único que pode
+prometer que acabou.
+
+#### Implementação do fechamento diário
 
 ```sql
--- A remessa fechou?
-SELECT CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END AS Fechou
-FROM   Pagamento.Boleto
-WHERE  ArquivoID = @arquivoRemessaId
-  AND  CodigoStatus IN (2, 7, 8);   -- ainda em trânsito
+-- Tudo do cliente com movimento na data, no estado atual.
+-- Repare que NÃO filtra por ControlePagamentoReportado: o fechamento
+-- repete de propósito o que já foi nos parciais.
+SELECT p.BoletoID, p.CodigoStatus, p.ArquivoID, p.NumeroLote
+FROM   Pagamento.Boleto p
+WHERE  p.ClienteDocumento = @documento
+  AND  p.DataAtualizacao >= @inicioDoDia
+  AND  p.DataAtualizacao <  @fimDoDia
+  AND  p.CodigoStatus IN (1, 3, 4, 5, 6)
+ORDER BY p.ArquivoID, p.NumeroLote;
 ```
+
+Como ele repete ocorrências, **o cliente precisa saber distinguir os dois
+arquivos** para não contabilizar duas vezes. É aqui que o marcador da seção 7.5
+deixa de ser conveniência e vira requisito.
+
+#### Implementação do encerramento de remessa
+
+```sql
+-- Remessas do cliente que fecharam e ainda não tiveram encerramento emitido
+SELECT a.ArquivoID
+FROM   Pagamento.Arquivo a
+WHERE  a.ClienteDocumento = @documento
+  AND  NOT EXISTS (   -- nenhum item em trânsito
+           SELECT 1 FROM Pagamento.Boleto b
+           WHERE  b.ArquivoID = a.ArquivoID
+             AND  b.CodigoStatus IN (2, 7, 8)
+       )
+  AND  NOT EXISTS (   -- ainda não emitido
+           SELECT 1 FROM Pagamento.RetornoGerado r
+           WHERE  r.ArquivoRemessaID = a.ArquivoID
+             AND  r.TipoRetorno = 3
+       );
+```
+
+E o prazo-limite, que impede a remessa de ficar aberta para sempre:
+
+```sql
+-- Remessas presas: passou do prazo e ainda tem item em trânsito.
+-- Emita o encerramento com o que houver E gere alerta com os pendentes.
+SELECT a.ArquivoID,
+       DATEDIFF(day, a.DataCriacao, SYSUTCDATETIME()) AS DiasAberta,
+       COUNT(b.BoletoID)                              AS ItensPendentes
+FROM   Pagamento.Arquivo a
+JOIN   Pagamento.Boleto b ON b.ArquivoID = a.ArquivoID
+WHERE  b.CodigoStatus IN (2, 7, 8)
+  AND  a.DataCriacao < DATEADD(day, -@prazoLimiteDias, SYSUTCDATETIME())
+GROUP BY a.ArquivoID, a.DataCriacao;
+```
+
+**Item que nunca termina é o caso que ninguém prevê.** Sem esse alerta, uma
+remessa pode ficar cinco dias com três itens presos e ninguém descobre até o
+cliente ligar. Trate a idade da remessa aberta como métrica de operação, ao lado
+das três da seção 14.
+
+#### O agendamento
+
+```csharp
+public sealed class AgendadorRetornoWorker(
+    IFila<RetornoSolicitado> fila,
+    IRepositorioClientes clientes,
+    TimeProvider relogio,
+    ILogger<AgendadorRetornoWorker> log) : BackgroundService
+{
+    // Fuso explícito: o contêiner roda em UTC, a regra de negócio é local.
+    // Deixar isso implícito faz o fechamento das 18h sair às 15h no verão.
+    private static readonly TimeZoneInfo Fuso =
+        TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo");
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var agora = TimeZoneInfo.ConvertTime(relogio.GetUtcNow(), Fuso);
+
+            if (agora.Hour is >= 8 and <= 18 && agora.Minute == 0)
+            {
+                var tipo = agora.Hour == 18 ? TipoRetorno.FechamentoDiario : TipoRetorno.Parcial;
+
+                foreach (var documento in await clientes.AtivosAsync(ct))
+                    await fila.PublicarAsync(new RetornoSolicitado(documento, tipo), ct);
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+        }
+    }
+}
+```
+
+O encerramento de remessa não entra nesse laço: ele é disparado pelo
+`CasamentoWorker`, quando a atualização de status deixa a remessa sem itens em
+trânsito. Reagir ao evento é mais barato e mais rápido que varrer todas as
+remessas abertas a cada ciclo.
+
+#### As perguntas para levar ao time antes de codificar
+
+1. **O que acontece com item ainda em trânsito no fechamento?** Fica de fora, ou
+   entra com o status atual? Se entrar com status transitório, você quebra a
+   regra de não reportar `Processando` e o cliente monta relatório sobre estado
+   que vai mudar.
+2. **E o item que finaliza às 19h?** Entra no parcial das 8h do dia seguinte? Isso
+   é coerente com fechamento diário e incoerente com "remessa encerrada".
+3. **O fechamento repete o que já foi nos parciais?** Se sim, o marcador de tipo
+   é obrigatório.
+4. **PIX não respeita 8h às 18h.** Ele liquida à noite, no fim de semana e no
+   feriado. Com workers só em dia útil comercial, a segunda de manhã começa com o
+   acúmulo do fim de semana inteiro. Isso é aceitável para o cliente?
+5. **Quem avisa sobre remessa presa?** Sem gatilho de encerramento, ninguém.
+
+Se três tipos parecerem demais para o momento, o mínimo viável é manter os dois
+que já existem e **renomear o das 18h** para algo que não prometa o que ele não
+entrega. "Fechamento diário" já resolve a maior parte do mal-entendido.
 
 ### 7.4 Os cuidados que costumam morder
 
@@ -1123,13 +1266,172 @@ alteração da linha, sempre crescente e único no banco inteiro. Como ele não
 depende do relógio nem do instante em que a transação começou, não sofre do
 problema de sobreposição descrito acima.
 
-**O consolidado não é o fim.** Três mecanismos podem reverter um pagamento já
+**Nem o encerramento é o fim.** Três mecanismos podem reverter um pagamento já
 liquidado: o **MED** (Mecanismo Especial de Devolução), que permite ao pagador do
 PIX contestar por suspeita de fraude em até 80 dias; o **estorno**, devolução
 acordada entre as partes; e o **chargeback**, contestação de compra no cartão
 junto à bandeira. Todos chegam depois. O
-parcial precisa continuar rodando depois do consolidado, e a marca d'água não
-pode ser zerada quando o consolidado sai.
+parcial precisa continuar rodando depois do encerramento, e a marca d'água não
+pode ser zerada quando ele sai.
+
+### 7.5 Como sinalizar o tipo do retorno no arquivo
+
+**O padrão não tem esse campo.** Nem o CNAB 240 nem o 400 preveem os três tipos
+da seção 7.3. O header de arquivo carrega o código de
+remessa/retorno (1 ou 2, que indica só a direção), o NSA, a data e hora de
+geração, a versão do layout e blocos de uso reservado. A distinção entre parcial
+e os demais tipos é um conceito seu, não do formato — por isso a solução mais comum
+do mercado é o nome do arquivo.
+
+**Por que o nome sozinho não basta.** Ele não viaja com o conteúdo. Se perde
+quando o ERP do cliente renomeia na ingestão, quando o arquivo é arquivado ou
+reprocessado, quando alguém abre um chamado e anexa só o conteúdo, e quando a VAN
+muda de convenção de nomenclatura. No dia do incidente, você tem um arquivo na
+mão e nenhuma forma de saber o que ele era.
+
+#### As opções
+
+| Opção | A favor | Contra |
+|---|---|---|
+| **Nome do arquivo** | Simples, já em uso, cliente entende | Não viaja com o conteúdo |
+| **Campo de uso da empresa no header** | Viaja com o conteúdo, sobrevive a tudo | Quebra clientes que já parseiam posição a posição |
+| **Faixa de NSA separada** | Nenhuma mudança de layout | Destrói a detecção de arquivo faltante, que é a razão de existir do NSA |
+| **Manifesto ao lado do arquivo** | Não invasivo, extensível | Só serve para quem escolher lê-lo |
+| **API de consulta por NSA** | Rica, evolui sem mexer no arquivo | Inútil para quem só busca arquivo em pasta |
+| **Metadado no seu banco** | Responde qualquer pergunta futura | Só você enxerga |
+
+#### 1. Persistir o tipo no seu banco (faça isto primeiro)
+
+É a camada mais importante e a única que não depende de acordo com o cliente.
+É ela que responde *"o NSA 42 daquele cliente era de que tipo, e o que
+ele continha?"* quando o chamado chegar daqui a três meses.
+
+```sql
+CREATE TABLE Pagamento.RetornoGerado
+(
+    Documento         VARCHAR(20)      NOT NULL,   -- cliente
+    Nsa               BIGINT           NOT NULL,
+    TipoRetorno       SMALLINT         NOT NULL,   -- 1=Parcial, 2=FechamentoDiario, 3=EncerramentoRemessa
+    ArquivoRemessaID  UNIQUEIDENTIFIER NULL,       -- só no encerramento de remessa
+    QuantidadeItens   INT              NOT NULL,
+    PeriodoInicio     DATETIME2(7)     NULL,       -- janela coberta pelo parcial
+    PeriodoFim        DATETIME2(7)     NULL,
+    NomeArquivo       VARCHAR(250)     NOT NULL,
+    HashConteudo      VARCHAR(32)      NOT NULL,   -- prova de qual arquivo saiu
+    DataCriacao       DATETIME2(7)     NOT NULL
+        CONSTRAINT DF_RetornoGerado_Data DEFAULT SYSUTCDATETIME(),
+
+    CONSTRAINT PK_RetornoGerado PRIMARY KEY CLUSTERED (Documento, Nsa)
+);
+```
+
+A PK em `(Documento, Nsa)` é intencional: além de indexar a busca natural, ela
+**impede fisicamente** que o mesmo NSA seja gravado duas vezes para o mesmo
+cliente. É a terceira defesa contra a corrida descrita na seção 13, depois da
+fila particionada e da reserva atômica.
+
+O `INSERT` entra na mesma transação da geração:
+
+```csharp
+// dentro da transação que já reservou o NSA e gravou os reportados
+await _retornos.RegistrarAsync(new RetornoGerado(
+    Documento:        documento,
+    Nsa:              nsa,
+    Tipo:             tipo,
+    ArquivoRemessaId: tipo == TipoRetorno.EncerramentoRemessa ? arquivoRemessaId : null,
+    QuantidadeItens:  itens.Count,
+    PeriodoInicio:    janela.Inicio,
+    PeriodoFim:       janela.Fim,
+    NomeArquivo:      nome,
+    HashConteudo:     Convert.ToHexString(MD5.HashData(bytes)).ToLowerInvariant()
+), conexao, tx, ct);
+```
+
+#### 2. Marcar no header, no bloco de uso da empresa
+
+O layout reserva um trecho do header de arquivo para uso do cedente, justamente
+para casos assim. Como vocês **publicam** o layout para os clientes, podem
+definir e documentar um código ali.
+
+```csharp
+public static class MarcadorTipoRetorno
+{
+    // ATENÇÃO: confirme as posições no manual de layout que VOCÊS publicam.
+    // O bloco reservado à empresa varia entre bancos e entre versões.
+    private const int PosicaoInicio = 192;   // base 1, conforme o manual
+    private const int Tamanho       = 10;
+
+    /// <summary>
+    /// Escreve o marcador no header de arquivo antes de entregá-lo ao conversor.
+    /// Preenche à direita com espaços, como manda o formato.
+    /// </summary>
+    public static string Aplicar(string headerArquivo, TipoRetorno tipo)
+    {
+        if (headerArquivo.Length != 240)
+            throw new ArgumentException("Header de arquivo deve ter 240 posições.", nameof(headerArquivo));
+
+        var marcador = tipo switch
+        {
+            TipoRetorno.Parcial             => "PARCIAL",
+            TipoRetorno.FechamentoDiario    => "FECHDIA",
+            TipoRetorno.EncerramentoRemessa => "ENCREM",
+            _ => throw new ArgumentOutOfRangeException(nameof(tipo))
+        }.PadRight(Tamanho);
+
+        var destino = headerArquivo.ToCharArray();
+        marcador.AsSpan().CopyTo(destino.AsSpan(PosicaoInicio - 1, Tamanho));
+        return new string(destino);
+    }
+}
+```
+
+**O risco a pesar:** clientes que já processam seus retornos hoje leem posição a
+posição. Se o bloco que você escolher estiver dentro de uma faixa que eles já
+mapeiam como "brancos", nada quebra; se não, quebra o parser deles sem aviso.
+Trate como mudança de layout: versione, comunique e ofereça período de
+convivência.
+
+#### 3. Manifesto ao lado do arquivo
+
+A opção menos invasiva, e a que evolui melhor. Um arquivo irmão, mesmo nome-base:
+
+```
+02384871000181_20260830_000042.RET
+02384871000181_20260830_000042.RET.json
+```
+
+```json
+{
+  "nsa": 42,
+  "tipo": "Parcial",
+  "clienteDocumento": "02384871000181",
+  "geradoEm": "2026-08-30T14:22:31Z",
+  "quantidadeItens": 137,
+  "periodo": { "inicio": "2026-08-30T08:00:00Z", "fim": "2026-08-30T14:22:00Z" },
+  "arquivoRemessa": null,
+  "hashConteudo": "9f2c4a…"
+}
+```
+
+Quem quer, lê; quem não quer, ignora. E ele serve de veículo para metadados
+futuros sem mexer no CNAB nunca mais.
+
+#### 4. A pergunta que decide a urgência disso
+
+> O fechamento diário repete ocorrências que já foram nos parciais?
+
+**Se sim** — e pela consulta da seção 7.3 ele repete — o cliente precisa
+distinguir os arquivos para não contar o mesmo pagamento duas vezes na
+contabilidade dele. Aí o marcador não é conveniência, é requisito, e depender só
+do nome do arquivo é um risco financeiro em aberto, não uma dívida técnica.
+
+**Se não** — se o fechamento é só conferência e o cliente é orientado a processar
+apenas os parciais — o marcador é conveniência operacional, e a ordem recomendada
+(banco primeiro, manifesto depois, header por último) resolve sem pressa.
+
+Em qualquer dos dois casos, deixe explícito no manual de integração qual é o
+comportamento esperado. Ambiguidade aqui vira dupla contabilização no cliente, e
+esse tipo de erro aparece semanas depois, na conciliação **dele**.
 
 ---
 
@@ -1720,7 +2022,7 @@ CREATE INDEX IX_Boleto_Janela
     ON Pagamento.Boleto (ClienteDocumento, DataAtualizacao)
     INCLUDE (CodigoStatus, NumeroLote, ArquivoID);
 
--- Consolidado: foto de uma remessa
+-- Encerramento de remessa: foto de uma remessa inteira
 CREATE INDEX IX_Boleto_Remessa
     ON Pagamento.Boleto (ArquivoID, NumeroLote)
     INCLUDE (CodigoStatus);
@@ -2097,7 +2399,8 @@ mesmo sem usá-la. Adicionar depois, com a tabela grande, é bem mais caro.
 | **Índice clusterizado** | O índice que **é** a tabela, ordenada fisicamente pela chave |
 | **Índice filtrado** | Índice com `WHERE`; indexa só o subconjunto que interessa |
 | **Compensação** | Etapa que confirma o pagamento entre bancos, antes da liquidação |
-| **Consolidado** | Retorno com a foto completa de uma remessa |
+| **Encerramento de remessa** | Retorno emitido quando o último item da remessa vira terminal |
+| **Fechamento diário** | Retorno em horário fixo com a foto do dia; pode conter pendências |
 | **D+0, D+1** | Prazo de liquidação em dias úteis |
 | **Header / Trailer** | Linha de abertura e linha de fechamento de um arquivo ou lote |
 | **Idempotência** | Repetir a operação produz o mesmo resultado que executá-la uma vez |
