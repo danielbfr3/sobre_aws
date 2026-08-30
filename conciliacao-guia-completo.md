@@ -44,7 +44,9 @@ contraparte registrou — isso é **conciliação**.
 Parece simples. A complexidade vem de quatro fatos:
 
 1. As duas partes são sistemas diferentes, que processam em momentos diferentes.
-2. O dinheiro leva tempo para se mover (liquidação é D+0, D+1 ou mais).
+2. O dinheiro leva tempo para se mover. Prazos são contados em dias úteis a
+   partir do envio: **D+0** é no mesmo dia, **D+1** no dia útil seguinte, e assim
+   por diante. Enquanto não liquida, o item está em um limbo legítimo.
 3. Uma operação "finalizada" pode ser revertida semanas depois.
 4. Errar custa dinheiro de verdade, e o erro tende a aparecer só na auditoria.
 
@@ -63,9 +65,14 @@ Parece simples. A complexidade vem de quatro fatos:
 | **Ocorrência** | O código que descreve o desfecho de um item | O status HTTP da linha |
 | **Liquidação** | O momento em que o dinheiro efetivamente muda de mãos | O commit no ledger do Bacen |
 
+> **Bacen** é o Banco Central do Brasil. Ele opera a infraestrutura em que os
+> bancos acertam contas entre si, e é lá que a liquidação de fato acontece.
+
 ### 2.2 O que é CNAB
 
-CNAB é um formato de arquivo de texto com **posição fixa**. Não tem
+**CNAB** é a sigla de Centro Nacional de Automação Bancária, o comitê da
+FEBRABAN que padronizou o formato — e virou o nome do próprio formato. É um
+arquivo de texto com **posição fixa**. Não tem
 delimitador, não tem JSON, não tem schema declarado: o campo "valor do
 pagamento" é simplesmente "as posições 120 a 134 da linha".
 
@@ -83,6 +90,14 @@ Registro 0 — Header de Arquivo      (uma vez, no topo)
 Registro 9 — Trailer de Arquivo     (uma vez, no fim, com totalizadores gerais)
 ```
 
+Vocabulário do formato: **header** é a linha de abertura (cabeçalho), **trailer**
+é a de fechamento (rodapé), e o trailer carrega os **totalizadores** — quantidade
+de registros e somatório de valores daquele bloco, que servem de conferência.
+O dígito na coluna 8 de cada linha diz o **tipo de registro**: 0 abre o arquivo,
+1 abre um lote, 3 é um pagamento, 5 fecha o lote, 9 fecha o arquivo. Um mesmo
+pagamento pode ocupar várias linhas de tipo 3, chamadas **segmentos** (A, B, C),
+cada uma com um pedaço diferente dos dados.
+
 Três consequências práticas para quem programa:
 
 - **Valores são inteiros com casas decimais implícitas.** `000000000093850`
@@ -94,9 +109,17 @@ Três consequências práticas para quem programa:
 
 ### 2.3 Por que existe "lote"
 
+As três formas de pagamento que aparecem neste documento: **PIX** (transferência
+instantânea, 24 horas por dia, com identificador único de ponta a ponta),
+**TED** (transferência entre bancos em dia útil, com horário de corte) e
+**boleto** (documento com código de barras que o pagador quita em qualquer
+banco). Elas diferem em prazo, em custo e, o que mais importa aqui, no formato
+do retorno que cada uma gera.
+
 O lote agrupa pagamentos do mesmo tipo (todos PIX, todos TED, todos boleto) e do
 mesmo cedente. Ele existe porque o trailer de lote carrega totalizadores que
-servem de checksum daquele agrupamento.
+servem de **checksum** daquele agrupamento — um valor derivado dos dados que
+permite ao leitor detectar que algo se perdeu ou foi alterado no caminho.
 
 Para o seu código, o lote importa por um motivo específico: **um pagamento só é
 localizável no arquivo original pela dupla `ArquivoID + NumeroLote`**. Sem o
@@ -105,15 +128,19 @@ no retorno.
 
 ### 2.4 NSA: o número sequencial do arquivo
 
-Cada arquivo trocado entre um cliente e o banco carrega um número sequencial
-(NSA). Ele serve para o cliente detectar arquivo faltando ou repetido: se ele
-recebeu 40 e 42, sabe que o 41 se perdeu.
+**NSA** quer dizer *número sequencial do arquivo*. Cada arquivo trocado entre um
+cliente e o banco carrega esse número, que avança de um em um. Ele serve para o
+cliente detectar arquivo faltando ou repetido: se ele recebeu o 40 e o 42, sabe
+que o 41 se perdeu no caminho.
 
 **Isso é o que torna a geração de arquivo um ponto serial.** Dois processos
 gerando arquivo para o mesmo cliente ao mesmo tempo produzem NSA duplicado, e o
 cliente rejeita. Voltaremos a isso na seção 13.
 
 ### 2.5 O fluxo completo
+
+No diagrama, **ERP** é o sistema de gestão do cliente — o software que controla
+contas a pagar e a receber e que produz a remessa.
 
 ```mermaid
 sequenceDiagram
@@ -193,6 +220,13 @@ depois. **O motor classifica; ele não age.**
 
 ### 4.1 As quatro etapas
 
+Ao longo do texto, **worker** é um processo que roda em segundo plano, sem
+interface, consumindo trabalho de uma fila — em .NET, tipicamente um
+`BackgroundService`. Uma etapa é **I/O-bound** quando passa a maior parte do
+tempo esperando disco, rede ou banco, e **CPU-bound** quando passa o tempo
+calculando. A distinção importa porque cada uma escala de um jeito: I/O aceita
+muita concorrência, CPU não passa do número de núcleos.
+
 ```mermaid
 flowchart LR
     A["Arquivo<br/>da contraparte"] --> I["1. Ingestão<br/>(I/O)"]
@@ -205,6 +239,17 @@ flowchart LR
     P --> D["S3 / FSx / VAN"]
 ```
 
+> **Onde os arquivos ficam.** **S3** é o armazenamento de objetos da AWS;
+> **FSx** é o serviço de compartilhamento de arquivos em rede da AWS, acessado
+> como uma pasta comum; **VAN** (Value Added Network) é a empresa intermediária
+> que muitos bancos usam para trocar arquivos com clientes, funcionando como um
+> correio: você deposita a remessa e busca o retorno. Para o pipeline, os três
+> são apenas origens e destinos de arquivo — o desenho não muda entre eles.
+>
+> **Outbox**, na caixa antes da publicação, é a tabela onde se grava a *intenção*
+> de publicar junto com o dado, para nunca publicar algo que a transação não
+> confirmou. A seção 10 detalha o padrão.
+
 Por que quatro processos e não um só:
 
 | Etapa | Perfil | Como escala | Exigência de consistência |
@@ -214,14 +259,33 @@ Por que quatro processos e não um só:
 | Geração | Curta | **Serial por cliente** | Transacional junto com o NSA |
 | Publicação | I/O-bound | Horizontal | At-least-once |
 
+Dois termos da tabela acima que valem definir antes de seguir:
+
+**Idempotente** quer dizer que executar a operação duas vezes produz o mesmo
+resultado que executá-la uma vez. Cobrar duas vezes não é idempotente; marcar um
+arquivo como processado é. Num pipeline financeiro isso não é elegância
+acadêmica: retry de fila, deploy no meio do lote e operador reprocessando à mão
+são eventos rotineiros.
+
+**At-least-once** é a garantia de entrega que quase toda fila oferece: a
+mensagem chega **pelo menos** uma vez, e pode chegar duas. Como você não pode
+escolher "exatamente uma vez" na prática, a saída é tornar o consumidor
+idempotente e deixar a duplicata inofensiva.
+
 **O argumento prático:** com tudo num worker só, um arquivo de 200 mil linhas de
 um cliente grande trava o retorno de todos os outros. Com filas entre as etapas,
 o cliente grande ocupa a ingestão e os pequenos seguem seu caminho.
 
-**O segundo argumento:** com o staging persistido, reprocessar é rodar a etapa 2
+**O segundo argumento:** o **staging** — área onde os dados crus do arquivo são
+gravados sem nenhuma regra de negócio aplicada — fica persistido, então
+reprocessar é rodar a etapa 2
 de novo. Você não precisa reler o arquivo, que pode nem existir mais.
 
 ### 4.2 "Fila" sem broker
+
+Um **broker de mensagens** é um serviço dedicado a guardar mensagens até que
+alguém as consuma — RabbitMQ, Kafka, Amazon SQS. Ele resolve entrega, retentativa
+e ordenação para você, ao custo de mais uma peça para operar e monitorar.
 
 Com apenas SQL Server disponível, a fila pode ser uma tabela. Funciona bem até
 uma escala considerável, desde que o consumo use os hints certos:
@@ -229,7 +293,7 @@ uma escala considerável, desde que o consumo use os hints certos:
 ```sql
 CREATE TABLE Fila.Mensagem
 (
-    MensagemID    BIGINT        IDENTITY(1,1) NOT NULL,
+    MensagemID    BIGINT        IDENTITY(1,1) NOT NULL,   -- IDENTITY: autoincremento do SQL Server
     Tipo          VARCHAR(100)  NOT NULL,
     ChaveParticao VARCHAR(50)   NOT NULL,   -- documento do cliente
     Payload       NVARCHAR(MAX) NOT NULL,
@@ -239,6 +303,8 @@ CREATE TABLE Fila.Mensagem
     Tentativas    INT           NOT NULL CONSTRAINT DF_Mensagem_Tentativas DEFAULT 0,
     UltimoErro    VARCHAR(1000) NULL,
 
+    -- PK (chave primária): identifica a linha e impede duplicata.
+    -- CLUSTERED: a tabela é fisicamente ordenada por esta chave (ver 8.2).
     CONSTRAINT PK_Mensagem PRIMARY KEY CLUSTERED (MensagemID)
 );
 GO
@@ -272,6 +338,13 @@ WHERE  m.DataFim IS NULL
 | Retry / DLQ | você implementa | parcial | pronto |
 | Custo no banco | soma ao mesmo servidor | soma ao mesmo servidor | zero |
 | Visibilidade operacional | `SELECT` | baixa | console pronto |
+
+Glossário da tabela: **Service Broker** é o sistema de filas embutido no próprio
+SQL Server; **SQS** é a fila gerenciada da AWS; **DLQ** (*dead letter queue*) é a
+fila para onde vai a mensagem que falhou muitas vezes, para não travar as demais;
+**FIFO** (*first in, first out*) é a fila que preserva a ordem de entrada, e o
+`MessageGroupId` é o campo que diz **dentro de qual grupo** essa ordem deve ser
+respeitada — no nosso caso, o documento do cliente.
 
 Com um SQL Server único, a tabela de fila é a escolha pragmática: você já tem
 transação, já tem backup, já sabe consultar. Migre para broker externo quando o
@@ -315,7 +388,12 @@ sequenceDiagram
 
 A VAN reenvia o mesmo arquivo com nomes diferentes com uma frequência que
 surpreende quem nunca viu. Por isso a chave de deduplicação é o **hash do
-conteúdo**, e ele é a **chave primária** da tabela:
+conteúdo**, e ele é a **chave primária** da tabela.
+
+Um **hash** é uma assinatura de tamanho fixo calculada a partir do conteúdo
+inteiro: dois arquivos idênticos produzem o mesmo **MD5** (32 caracteres
+hexadecimais), e qualquer byte diferente produz um MD5 completamente diferente.
+É a impressão digital do arquivo.
 
 ```sql
 CREATE TABLE Conciliacao.ArquivoProcessado
@@ -380,6 +458,12 @@ CREATE INDEX IX_Staging_ChaveForte
     INCLUDE (ValorEfetivadoCent, CodigoOcorrencia);
 ```
 
+> **O que faz o `INCLUDE`.** As colunas antes do `INCLUDE` são as que o índice
+> ordena e por onde a busca acontece. As colunas dentro do `INCLUDE` viajam junto,
+> sem participar da ordenação, só para que a consulta encontre tudo de que precisa
+> no índice e não tenha que voltar à tabela para buscar o resto. Essa volta se
+> chama *lookup*, e é o que costuma dominar o custo de uma consulta.
+
 Três razões para guardar a linha crua (`LinhaOriginal`):
 
 1. **Reprocessamento** sem depender do arquivo original.
@@ -392,9 +476,11 @@ e expurgue em lotes.
 
 ### 5.4 SqlBulkCopy, não INSERT em loop
 
-Um `INSERT` por linha é um round-trip por linha. Cinquenta mil linhas viram
-cinquenta mil idas ao banco, e o lote que deveria levar segundos leva dezenas de
-minutos.
+Um `INSERT` por linha é um *round-trip* por linha — ou seja, uma ida e volta
+completa pela rede até o banco, cada uma com seu custo fixo de latência.
+Cinquenta mil linhas viram cinquenta mil idas ao banco, e o lote que deveria
+levar segundos leva dezenas de minutos. `SqlBulkCopy` é a API do .NET que usa o
+protocolo de carga em massa do SQL Server: manda tudo num fluxo só.
 
 ```csharp
 public async Task CarregarAsync(Guid arquivoId, IReadOnlyList<ItemExterno> linhas, CancellationToken ct)
@@ -440,6 +526,11 @@ micro-otimização, é a diferença entre viável e inviável.
 
 ### 5.5 Parse de posição fixa sem alocar
 
+`ReadOnlySpan<char>` é uma janela sobre um pedaço de memória que já existe. Ao
+contrário de `Substring`, que cria uma string nova a cada campo lido, o `Span`
+apenas aponta para o trecho. Num arquivo com 50 mil linhas e 20 campos cada, isso
+são um milhão de alocações a menos para o coletor de lixo processar.
+
 ```csharp
 public IReadOnlyList<ItemExterno> Parsear(ReadOnlySpan<char> conteudo, string clienteDocumento)
 {
@@ -478,7 +569,7 @@ public IReadOnlyList<ItemExterno> Parsear(ReadOnlySpan<char> conteudo, string cl
 |---|---|---|
 | Hash como PK | Corrida resolvida pelo banco | Reprocessar de propósito exige apagar a linha |
 | Staging persistido | Reprocessa sem o arquivo | Tabela grande; precisa de retenção |
-| `SqlBulkCopy` | Ordens de magnitude mais rápido | Não dispara trigger nem valida FK por padrão |
+| `SqlBulkCopy` | Ordens de magnitude mais rápido | Não dispara trigger nem valida FK (chave estrangeira) por padrão |
 | Parse com `Span` | Sem alocação por campo | Código mais verboso que `Substring` |
 
 ---
@@ -556,12 +647,17 @@ Casar por valor é o erro do iniciante: dois pagamentos de R$ 100,00 no mesmo di
 casam trocados e ninguém percebe. O que se usa:
 
 **Chave forte** — um identificador que as duas partes acordaram carregar
-(`IdentificadorExterno`, `EndToEndId` do PIX, `TxID`). Quando existe, é
-confiável e o casamento é 1:1.
+(`IdentificadorExterno`, `EndToEndId` do PIX, `TxID`). O **EndToEndId** é o
+identificador único que acompanha uma transação PIX do início ao fim, gerado na
+origem e devolvido em toda notificação; o **TxID** é o identificador que o
+recebedor associa à cobrança. Quando existe uma chave assim, ela é confiável e o
+casamento é 1:1.
 
 **Chave composta** — quando a contraparte não devolve o seu identificador, você
 compõe a partir do que o layout carrega: `cliente + nosso número`, desempatando
-por proximidade de data.
+por proximidade de data. **Nosso número** é o identificador que o banco atribui
+a um título de cobrança — o nome é do ponto de vista do banco, e ele aparece no
+boleto e em todos os arquivos relacionados àquele título.
 
 ```mermaid
 flowchart TD
@@ -702,6 +798,14 @@ operações. Na prática, a diferença entre 40 minutos e 200 milissegundos.
 
 Quando o volume por arquivo passa de algumas centenas de milhares de linhas,
 vale fazer o casamento no banco: os dados não trafegam pela rede.
+
+Dois recursos do **T-SQL** (Transact-SQL, o dialeto de SQL do SQL Server, com
+variáveis, controle de fluxo e procedimentos) aparecem no código abaixo. **CTE** (*common table
+expression*, o bloco `WITH ... AS`) é uma consulta nomeada que existe só durante
+aquele comando, útil para dar nome a uma etapa intermediária sem criar tabela.
+**`ROW_NUMBER() OVER (PARTITION BY x ORDER BY y)`** numera as linhas dentro de
+cada grupo `x`, seguindo a ordem `y` — é assim que se escolhe "o primeiro de
+cada" sem `GROUP BY`.
 
 ```sql
 CREATE OR ALTER PROCEDURE Conciliacao.ExecutarCasamento
@@ -904,7 +1008,15 @@ pendente, ele pertence ao grupo dos transitórios.
 ### 7.2 Retorno parcial
 
 Um parcial responde: *"o que mudou desde a última vez que falei com este
-cliente?"*. Três filtros combinados:
+cliente?"*.
+
+Dois termos que se repetem daqui em diante. A **janela** é o intervalo de tempo
+que uma execução cobre — do último envio até agora. A **marca d'água**
+(*watermark*) é o instante guardado que marca até onde você já reportou; ela é o
+limite inferior da próxima janela, e avançá-la corretamente é o que impede tanto
+repetição quanto buraco.
+
+Três filtros combinados:
 
 1. **Janela** — `DataAtualizacao > UltimoInstanteReportado`
 2. **Não reportado** — o par `(PagamentoID, CodigoStatus)` ainda não foi enviado
@@ -1005,10 +1117,17 @@ some para sempre:
 
 A defesa é buscar a partir de `marcaDagua - 5 minutos` e deixar o
 `ControlePagamentoReportado` cortar a duplicata. É exatamente para isso que ele
-existe. Alternativa mais robusta: usar `rowversion` em vez de `datetime2`, que é
-monotônico e imune a esse problema.
+existe. Alternativa mais robusta: usar **`rowversion`** em vez de `datetime2`.
+É um contador binário que o SQL Server incrementa automaticamente a cada
+alteração da linha, sempre crescente e único no banco inteiro. Como ele não
+depende do relógio nem do instante em que a transação começou, não sofre do
+problema de sobreposição descrito acima.
 
-**O consolidado não é o fim.** MED, estorno e chargeback chegam depois. O
+**O consolidado não é o fim.** Três mecanismos podem reverter um pagamento já
+liquidado: o **MED** (Mecanismo Especial de Devolução), que permite ao pagador do
+PIX contestar por suspeita de fraude em até 80 dias; o **estorno**, devolução
+acordada entre as partes; e o **chargeback**, contestação de compra no cartão
+junto à bandeira. Todos chegam depois. O
 parcial precisa continuar rodando depois do consolidado, e a marca d'água não
 pode ser zerada quando o consolidado sai.
 
@@ -1041,14 +1160,23 @@ CREATE TABLE Pagamento.ControlePagamentoReportado
 Um modelo natural seria `PRIMARY KEY CLUSTERED (PagamentoID, CodigoStatus)`.
 Ele funciona, e degrada silenciosamente.
 
-`PagamentoID` é `uniqueidentifier` aleatório. O índice clusterizado ordena a
-tabela **fisicamente** pela chave, então cada `INSERT` cai numa página aleatória
-no meio dos dados. Consequências:
+`PagamentoID` é `uniqueidentifier` — o tipo do SQL Server para **GUID**, um
+identificador de 16 bytes gerado aleatoriamente, sem ordem entre um valor e o
+seguinte.
 
-- **Page splits** constantes: a página está cheia, o SQL Server a divide em duas
+Um **índice clusterizado** não é uma estrutura à parte: ele **é** a tabela,
+ordenada fisicamente pela chave. Só existe um por tabela, e escolher a chave
+errada define o padrão de escrita no disco para sempre. Com uma chave aleatória,
+cada `INSERT` cai numa página aleatória no meio dos dados. Consequências:
+
+- **Page splits** constantes: uma *página* é o bloco de 8 KB em que o SQL Server
+  guarda as linhas. Quando ela está cheia e chega uma linha que pertence ao meio
+  dela, o banco divide a página em duas e move metade dos dados — operação cara,
+  que ainda gera log
 - **Fragmentação** alta: as páginas ficam meio vazias e espalhadas
-- **Buffer pool poluído**: para inserir uma linha, uma página aleatória precisa
-  vir do disco para a memória
+- **Buffer pool poluído**: o *buffer pool* é a memória RAM em que o SQL Server
+  mantém as páginas mais usadas. Com inserção aleatória, cada linha nova exige
+  trazer uma página diferente do disco, expulsando páginas úteis
 - Tudo isso **piora conforme a tabela cresce**
 
 Com dez mil linhas ninguém nota. Com cinquenta milhões, o insert do lote vira o
@@ -1063,8 +1191,13 @@ clusterizado (insert sempre no fim da tabela, zero page split) e o par como
 | Padrão de escrita | aleatório | sequencial |
 | Fragmentação | alta, cresce | baixa |
 | Espaço | um índice | dois índices |
-| Busca pelo par | direta no clustered | seek no NC + lookup |
-| Manutenção | rebuild frequente | raro |
+| Busca pelo par | direta no clustered | *seek* no índice não clusterizado + *lookup* |
+| Manutenção | *rebuild* frequente | raro |
+
+*Seek* é a busca direta que salta para a posição certa do índice, oposta ao
+*scan*, que percorre tudo. *Rebuild* é a reconstrução do índice para desfazer a
+fragmentação — operação pesada, que idealmente você não precisa fazer toda
+semana.
 
 O `INCLUDE` resolve o lookup quando ele incomodar:
 
@@ -1075,6 +1208,11 @@ CREATE UNIQUE NONCLUSTERED INDEX UX_CPR_Par
 ```
 
 ### 8.3 Escrita em lote com TVP
+
+Um **TVP** (*table-valued parameter*, ou parâmetro com valor de tabela) permite
+mandar uma tabela inteira como um único parâmetro de um procedimento. Você
+declara o formato da tabela uma vez no banco e, do .NET, passa um `DataTable`
+no lugar de um valor escalar.
 
 Um `INSERT` por pagamento é um round-trip por pagamento. Mande o lote inteiro:
 
@@ -1139,6 +1277,10 @@ arquivo repetir tudo. Se gravar antes e a geração falhar, o cliente nunca rece
 aquele estado.
 
 ### 8.4 A leitura e o índice que a sustenta
+
+O `NOT EXISTS` da consulta é o que se chama de **anti-join**: em vez de trazer
+as linhas que têm correspondente, ele traz justamente as que **não** têm. É a
+tradução literal de "me dê o que ainda não reportei".
 
 O custo real do parcial está no lado esquerdo do anti-join, não no anti-join.
 A marca d'água já reduz o conjunto para "o que mudou", então o índice decisivo é:
@@ -1508,8 +1650,11 @@ A lição mais contraintuitiva do domínio:
 > decisão de um terceiro, fora do seu controle.
 
 MED no PIX (contestação em até 80 dias), chargeback no cartão, estorno de
-boleto: são instâncias do mesmo padrão arquitetural. É um *saga* com
-compensação chegando semanas depois, disparada por quem não é você.
+boleto: são instâncias do mesmo padrão arquitetural. É uma **saga** — nome que se
+dá a uma transação distribuída que não pode ser desfeita com `ROLLBACK`, porque
+já terminou e já produziu efeito no mundo. Em vez de desfazer, você registra uma
+operação **compensatória** que anula o efeito da primeira. Aqui a compensação
+chega semanas depois, disparada por quem não é você.
 
 ```mermaid
 sequenceDiagram
@@ -1601,13 +1746,19 @@ IS NULL` faz o índice ter o tamanho da fila pendente, não da tabela histórica
 
 ### 12.2 RCSI: leitor não bloqueia escritor
 
+**RCSI** é a sigla de *Read Committed Snapshot Isolation*. É um modo de
+isolamento em que cada consulta enxerga uma foto consistente dos dados no
+instante em que começou, em vez de disputar locks com quem está escrevendo.
+
 ```sql
 ALTER DATABASE ASA_CASH_PAGAMENTO SET READ_COMMITTED_SNAPSHOT ON;
 ```
 
 Por padrão, o SQL Server usa locks compartilhados na leitura, então um relatório
 longo bloqueia a escrita do worker. Com RCSI, a leitura enxerga a versão
-commitada da linha via `tempdb`, sem lock.
+commitada da linha via `tempdb`, sem lock. O **`tempdb`** é o banco de trabalho
+interno do SQL Server, onde ficam tabelas temporárias, ordenações grandes e — com
+RCSI ligado — as versões antigas das linhas. Ele passa a ser um recurso crítico.
 
 | | Sem RCSI | Com RCSI |
 |---|---|---|
@@ -1618,14 +1769,24 @@ commitada da linha via `tempdb`, sem lock.
 Ligar RCSI costuma render mais que qualquer otimização de query neste tipo de
 carga. Só exige `tempdb` bem dimensionado, de preferência em disco rápido.
 
-E, com RCSI ligado, **remova os `WITH (NOLOCK)` do código**. Leitura suja em
-sistema financeiro produz números que não existiram em nenhum instante.
+E, com RCSI ligado, **remova os `WITH (NOLOCK)` do código**. `NOLOCK` manda o
+SQL Server ler sem respeitar lock nenhum: é rápido porque enxerga inclusive
+alterações ainda não confirmadas, que podem ser desfeitas em seguida. Essa
+*leitura suja* em sistema financeiro produz números que não existiram em nenhum
+instante.
 
 ### 12.3 Lotes pequenos, transações curtas
 
+Um **lock** é a trava que o banco coloca sobre uma linha, página ou tabela para
+impedir que dois processos alterem a mesma coisa ao mesmo tempo. Quanto mais
+tempo a transação fica aberta, mais tempo as travas ficam de pé e mais gente
+espera.
+
 ```csharp
 // ERRADO: uma transação de 500 mil linhas.
-// Log de transação explode, locks escalam para tabela inteira,
+// O log de transação (o arquivo onde o SQL Server registra toda alteração
+// antes de aplicá-la, e que só é liberado no commit) cresce sem parar,
+// os locks escalam para a tabela inteira,
 // e um rollback leva mais tempo que o processamento.
 using var tx = conexao.BeginTransaction();
 foreach (var item in quinhentosMil) { ... }
@@ -1656,26 +1817,37 @@ CREATE PARTITION SCHEME PS_Mensal
 AS PARTITION PF_Mensal ALL TO ([PRIMARY]);
 ```
 
-O ganho principal não é consulta, é **expurgo**: `SWITCH` de partição move
-milhões de linhas para uma tabela de descarte instantaneamente, sem log.
+O ganho principal não é consulta, é **expurgo**: o `SWITCH` de partição troca o
+*ponteiro* de uma partição inteira para outra tabela. Como nenhuma linha é
+fisicamente movida, milhões de registros saem da tabela instantaneamente e sem
+gerar log.
 
 ### 12.5 Quando o servidor único vira o limite
 
 Sinais de que chegou a hora de mudar de arquitetura:
 
 - CPU acima de 70% sustentado no horário de janela
-- Espera predominante em `PAGEIOLATCH` (falta memória) ou `WRITELOG` (disco)
-- Bloqueio entre a carga OLTP e as consultas de conciliação
+- Espera predominante em `PAGEIOLATCH` ou `WRITELOG`. O SQL Server registra em
+  que o processo ficou esperando: `PAGEIOLATCH` significa esperar página vir do
+  disco para a memória, indício de RAM insuficiente; `WRITELOG` significa esperar
+  a gravação no log de transação, indício de disco lento
+- Bloqueio entre a carga **OLTP** (*online transaction processing*, o tráfego de
+  transações curtas do dia a dia) e as consultas de conciliação, que são longas
 - Janela de conciliação encostando no início da próxima
 
 As saídas, em ordem de custo:
+
+Um **Availability Group** é o recurso do SQL Server que mantém uma cópia do
+banco sincronizada em outro servidor. Além de alta disponibilidade, ele permite
+direcionar consultas somente leitura para a réplica, tirando essa carga do
+servidor principal.
 
 | Saída | Ganho | Custo |
 |---|---|---|
 | Ajustar índice e query | grande, sempre primeiro | horas de análise |
 | Ligar RCSI | remove contenção leitor/escritor | `tempdb` |
 | Mover staging para outro banco no mesmo servidor | isola I/O e backup | pouco |
-| Réplica somente leitura (AG) para relatórios | tira leitura do primário | licença, latência |
+| Réplica somente leitura via **Availability Group** para relatórios | tira leitura do primário | licença, latência |
 | Particionar | expurgo barato | complexidade de manutenção |
 | Separar o banco de conciliação em outra instância | isolamento real | operação, licença |
 
@@ -1709,8 +1881,10 @@ await GravarSequencialAsync(documento, atual + 1);
 return atual + 1;
 ```
 
-O `UPDATE ... OUTPUT` deixa o próprio banco serializar: duas instâncias
-concorrentes recebem números diferentes, sem transação explícita e sem retry.
+A cláusula `OUTPUT` devolve, na mesma instrução, os valores que o `UPDATE`
+acabou de gravar. Assim o incremento e a leitura do novo número acontecem num
+único comando atômico: duas instâncias concorrentes recebem números diferentes,
+sem transação explícita e sem retry.
 
 Se a linha não existir, o comando não retorna nada. Falhar aqui é melhor que
 gerar NSA zero:
@@ -1727,6 +1901,9 @@ A unidade natural de paralelismo é o **documento do cliente**: paralelize entre
 clientes, serialize dentro de cada um.
 
 ```sql
+-- CHECKSUM devolve um inteiro derivado do texto. O resto da divisão
+-- distribui os clientes entre as réplicas de forma estável: o mesmo
+-- documento cai sempre na mesma réplica.
 -- Cada réplica pega uma fatia estável dos clientes
 WHERE DataFim IS NULL
   AND ABS(CHECKSUM(ChaveParticao)) % @totalReplicas = @indiceReplica
@@ -1737,6 +1914,10 @@ serviço garante que duas instâncias nunca peguem o mesmo grupo, e paraleliza
 entre grupos automaticamente.
 
 ### 13.3 Lock de aplicação como rede de segurança
+
+`sp_getapplock` cria um lock sobre um nome arbitrário que você escolhe, em vez
+de sobre uma linha ou tabela. Serve para dizer "só um processo por vez pode
+mexer neste cliente", mesmo que os comandos toquem tabelas diferentes.
 
 ```sql
 DECLARE @rc INT;
@@ -1897,25 +2078,58 @@ mesmo sem usá-la. Adicionar depois, com a tabela grande, é bem mais caro.
 
 | Termo | Significado |
 |---|---|
+| **Anti-join** | Consulta que devolve o que NÃO tem correspondente (`NOT EXISTS`) |
 | **At-least-once** | Garantia de entrega que pode duplicar; exige consumidor idempotente |
+| **Availability Group** | Réplica sincronizada do banco; permite leitura fora do primário |
+| **Broker** | Serviço dedicado a guardar e entregar mensagens (SQS, RabbitMQ, Kafka) |
+| **Buffer pool** | Memória RAM onde o SQL Server mantém as páginas mais usadas |
 | **Cedente** | Empresa cliente que emite a remessa |
 | **Chargeback** | Contestação de compra no cartão; reverte transação já liquidada |
-| **CNAB** | Formato de arquivo texto de posição fixa usado pelos bancos brasileiros |
+| **Checksum** | Valor derivado dos dados que permite detectar perda ou alteração |
+| **CNAB** | Centro Nacional de Automação Bancária; por extensão, o formato de arquivo de posição fixa |
+| **CPU-bound** | Etapa limitada por processamento, não por espera de I/O |
+| **CTE** | Bloco `WITH ... AS`; consulta nomeada válida só naquele comando |
+| **DLQ** | Dead letter queue; fila para mensagens que falharam repetidamente |
+| **EndToEndId** | Identificador único que acompanha uma transação PIX de ponta a ponta |
+| **FIFO** | Fila que preserva a ordem de entrada dentro de cada grupo |
+| **GUID** | Identificador de 16 bytes gerado aleatoriamente; `uniqueidentifier` no SQL Server |
+| **Hash** | Assinatura de tamanho fixo derivada do conteúdo; impressão digital do arquivo |
+| **Índice clusterizado** | O índice que **é** a tabela, ordenada fisicamente pela chave |
+| **Índice filtrado** | Índice com `WHERE`; indexa só o subconjunto que interessa |
 | **Compensação** | Etapa que confirma o pagamento entre bancos, antes da liquidação |
 | **Consolidado** | Retorno com a foto completa de uma remessa |
 | **D+0, D+1** | Prazo de liquidação em dias úteis |
+| **Header / Trailer** | Linha de abertura e linha de fechamento de um arquivo ou lote |
 | **Idempotência** | Repetir a operação produz o mesmo resultado que executá-la uma vez |
+| **I/O-bound** | Etapa limitada por espera de disco, rede ou banco |
+| **Janela** | Intervalo de tempo que uma execução do parcial cobre |
+| **Log de transação** | Arquivo onde o SQL Server registra toda alteração antes de confirmá-la |
 | **Liquidação** | Momento em que o dinheiro muda de mãos de fato |
 | **Lote** | Agrupamento de pagamentos do mesmo tipo dentro de um arquivo CNAB |
 | **Marca d'água** | Instante até o qual você já reportou; base da janela do parcial |
 | **MED** | Mecanismo Especial de Devolução do PIX; permite contestar por fraude |
+| **`NOLOCK`** | Hint que lê sem respeitar locks; enxerga dados não confirmados |
 | **NSA** | Número sequencial do arquivo; detecta arquivo faltando ou repetido |
+| **Nosso número** | Identificador que o banco atribui a um título de cobrança |
 | **Ocorrência** | Código que descreve o desfecho de um item no retorno |
+| **OLTP** | Carga de transações curtas do dia a dia, oposta à carga analítica |
+| **Page split** | Divisão de uma página de 8 KB cheia; caro e gerador de fragmentação |
 | **Outbox** | Padrão que grava a intenção de publicar junto com o dado, na mesma transação |
 | **Parcial** | Retorno incremental: só o que mudou desde a última janela |
 | **RCSI** | Read Committed Snapshot Isolation; leitor não bloqueia escritor |
 | **Remessa** | Arquivo que o cliente envia ao banco com instruções |
 | **Retorno** | Arquivo que o banco devolve com o desfecho de cada item |
 | **Saga** | Padrão de transação distribuída com compensação em vez de rollback |
+| **Seek / Scan** | Busca direta na posição certa do índice / varredura completa |
+| **Segmento** | Linha de detalhe (A, B, C) com um pedaço dos dados de um pagamento |
+| **`SWITCH` de partição** | Troca de ponteiro que move uma partição inteira sem copiar linhas |
 | **Staging** | Área de dados crus, antes da aplicação de regra de negócio |
+| **Round-trip** | Uma ida e volta completa pela rede até o banco |
+| **`rowversion`** | Contador binário sempre crescente, incrementado a cada alteração da linha |
+| **`tempdb`** | Banco de trabalho interno do SQL Server; crítico com RCSI ligado |
+| **TED** | Transferência entre bancos em dia útil, com horário de corte |
+| **Totalizadores** | Quantidade de registros e somatório de valores gravados no trailer |
+| **T-SQL** | Transact-SQL, o dialeto de SQL do SQL Server |
 | **TVP** | Table-Valued Parameter; envia uma tabela inteira num parâmetro |
+| **VAN** | Empresa intermediária que transporta arquivos entre banco e cliente |
+| **Worker** | Processo em segundo plano que consome trabalho de uma fila |
