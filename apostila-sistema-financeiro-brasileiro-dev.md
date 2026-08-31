@@ -22,7 +22,14 @@
 **Parte III — Os trilhos de pagamento**
 10. [PIX: arquitetura técnica em detalhe](#10-pix-arquitetura-técnica-em-detalhe)
 11. [TED, boleto e CNAB: os trilhos "tradicionais"](#11-ted-boleto-e-cnab)
-11-A. [CNAB 240 de pagamento: segmentos, estados e ocorrências](#11-a-cnab-240-de-pagamento-segmentos-estados-e-ocorrências)
+    - [11.1 TED](#111-ted)
+    - [11.2 O boleto bancário](#112-o-boleto-bancário)
+    - [11.3 Código de barras e linha digitável](#113-código-de-barras-e-linha-digitável)
+    - [11.4 CNAB: o formato de arquivo](#114-cnab-o-formato-de-arquivo)
+    - [11.5 Carteiras de cobrança](#115-carteiras-de-cobrança)
+    - [11.6 CNAB de cobrança em detalhe](#116-cnab-de-cobrança-em-detalhe)
+    - [11.7 CNAB de pagamento em detalhe](#117-cnab-de-pagamento-em-detalhe)
+    - [11.8 CNAB × APIs modernas](#118-cnab-×-apis-modernas)
 12. [Cartões: o arranjo de quatro partes](#12-cartões-o-arranjo-de-quatro-partes)
 
 **Parte IV — Crédito e conformidade**
@@ -48,8 +55,8 @@
 
 Quando você trabalha em backend de banco — seja num core bancário, num sistema de cobrança, num motor de crédito ou numa integração PIX — está, na prática, escrevendo um dos nós de uma rede regulada que tem o **Banco Central do Brasil (Bacen/BCB)** como liquidante final. Entender essa rede muda a forma como você projeta idempotência, reconciliação, tratamento de erro e SLA, porque cada mensagem que seu serviço envia eventualmente:
 
-- passa por uma **câmara** — uma entidade que centraliza e organiza as trocas financeiras entre instituições (Núclea, B3, SPI, STR);
-- é liquidada em **moeda de banco central**, numa conta de Reservas Bancárias no Bacen;
+- passa por uma **câmara** ou por um sistema de liquidação — entidades que centralizam e organizam as trocas financeiras entre instituições. As quatro que você vai encontrar o tempo todo: o **STR** (Sistema de Transferência de Reservas, do Bacen, onde a liquidação interbancária se torna definitiva), o **SPI** (Sistema de Pagamentos Instantâneos, o motor do PIX, também do Bacen), a **Núclea** (câmara privada, ex-CIP, que compensa boleto, TED e cartão) e a **B3** (bolsa e câmara do mercado de capitais). O capítulo 9 detalha cada uma;
+- é liquidada em **moeda de banco central**, numa conta que a instituição mantém no Bacen;
 - gera (ou consome) um **registro regulatório** (SCR, DICT, Open Finance) que outras instituições e o próprio Bacen também enxergam.
 
 Esta apostila cobre os fundamentos econômicos e contábeis, a estrutura institucional, os trilhos de pagamento (PIX, boleto/CNAB, TED, cartões), a área de crédito e as obrigações de conformidade — sempre com o olhar de "o que isso significa para o meu sistema".
@@ -60,32 +67,92 @@ Esta apostila cobre os fundamentos econômicos e contábeis, a estrutura institu
 
 Esta apostila vai do **simples ao avançado** e assume que você sabe programar, mas **não** que você conheça o domínio bancário. Nenhum conhecimento prévio de finanças é necessário.
 
-A ordem dos capítulos é intencional — cada parte depende da anterior:
+A ordem dos capítulos é intencional, mas nem todo capítulo depende de todos os anteriores. O grafo abaixo mostra o que é **pré-requisito de quê** — use-o para pular com segurança:
 
 ```mermaid
 graph LR
-    P1["Parte I<br/>Fundamentos<br/>caps. 3-6"] --> P2["Parte II<br/>Infraestrutura<br/>caps. 7-9"]
-    P2 --> P3["Parte III<br/>Trilhos de pagamento<br/>caps. 10-12"]
-    P3 --> P4["Parte IV<br/>Crédito e conformidade<br/>caps. 13-15"]
-    P4 --> P5["Parte V<br/>Fronteira<br/>caps. 16-17"]
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
 
-    style P1 fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    C3["3 · Conceitos<br/>fundamentais"] --> C4["4 · O banco<br/>por dentro"]
+    C3 --> C5["5 · Contabilidade<br/>para devs"]
+    C3 --> C9["9 · SPB"]
+    C4 --> C5
+    C5 --> C6["6 · Dinheiro<br/>no código"]
+    C5 --> C13["13 · Crédito"]
+    C6 --> C13
+    C9 --> C10["10 · PIX"]
+    C9 --> C11["11 · TED, boleto<br/>e CNAB"]
+    C9 --> C12["12 · Cartões"]
+    C7["7 · Estrutura<br/>do SFN"] --> C9
+    C8["8 · Bacen:<br/>RSFN e ISPB"] --> C10
+    C8 --> C9
+    C10 --> C16["16 · Open Finance"]
+    C11 --> C15["15 · Conciliação<br/>e disputas"]
+    C12 --> C15
+    C13 --> C14["14 · Compliance"]
+    C15 --> C17["17 · Visão<br/>consolidada"]
+    C16 --> C17
+
+    class C3,C5 destaque
 ```
+
+Os dois nós destacados — **3** e **5** — são os únicos verdadeiramente obrigatórios: quase todo o resto depende de um deles.
 
 | Se você… | Comece por |
 |---|---|
 | Nunca trabalhou com banco | Capítulo 3, na ordem, sem pular |
 | Já trabalha com pagamentos, quer entender crédito | Capítulos 3, 5 e 6, depois pule para 13 |
 | Já trabalha com crédito, quer entender pagamentos | Capítulos 3, 9, 10, 11 e 12 |
+| Vai mexer em arquivo CNAB amanhã | Capítulos 3 e 11, nessa ordem |
 | Precisa de referência rápida | Capítulo 18 (glossário) |
 
-**Como o texto é escrito.** Todo termo novo é definido no momento em que aparece pela primeira vez, em negrito, com a explicação logo em seguida. Você não precisa consultar nada fora deste documento para acompanhar — siglas são expandidas, jargão é traduzido, e o capítulo 18 repete tudo em forma de glossário para consulta rápida. Capítulos terminam com um **checkpoint**: perguntas curtas com gabarito, para você verificar se entendeu antes de seguir.
+**Como o texto é escrito.** Todo termo novo é definido no momento em que aparece pela primeira vez, em negrito, com a explicação logo em seguida. Siglas são expandidas, jargão é traduzido, e o capítulo 18 recolhe tudo em forma de glossário para consulta rápida. Todo capítulo de conteúdo — do 3 ao 17 — termina com um **checkpoint**: perguntas curtas cujo gabarito fica dentro de um bloco `<details>` recolhido, para o olho não ler a resposta antes de o cérebro tentar. O capítulo 11, por ser o maior, tem dois: um de cobrança e um de pagamento. Alguns capítulos trazem também **exercícios**, que é outra coisa: checkpoint verifica se você lembra, exercício verifica se você consegue fazer.
+
+**Uma convenção de nomenclatura**, para você não se perder nas referências cruzadas: **capítulo** é uma divisão de primeiro nível (`## 5. Contabilidade para devs`); **seção** é uma subdivisão dela (`### 13.4 Inadimplência, provisão e write-off`). O texto usa os dois termos sempre nesse sentido.
 
 **Três avisos honestos antes de começar:**
 
 1. **O vocabulário é o obstáculo real, não a complexidade técnica.** Um dev sênior consegue entender qualquer fluxo desta apostila; o que trava é a densidade de siglas. Não decore — volte ao glossário sempre que precisar.
 2. **Errar em sistema financeiro custa dinheiro real de pessoas reais.** Um bug de arredondamento vira reclamação no Bacen. Isso muda o padrão de qualidade esperado do seu código — testes, idempotência e auditoria não são opcionais aqui.
 3. **A regra muda.** Bacen publica resoluções continuamente. Esta apostila tem data (agosto/2026); antes de implementar, confirme a norma vigente.
+
+### O que esta apostila cobre — e o que não cobre
+
+"Do simples ao avançado" é uma promessa vazia sem dizer avançado *em quê*. O recorte é este: **o dinheiro dentro do Brasil, em reais, do ponto de vista de quem escreve o backend que o move ou o registra.**
+
+**Está dentro, com profundidade:** contabilidade bancária e desenho de ledger, matemática financeira e representação monetária, a infraestrutura do SFN e do SPB, os trilhos PIX / TED / boleto / CNAB / cartões, o ciclo de crédito com garantias e recebíveis, e as obrigações de conformidade que viram requisito de sistema.
+
+**Está de fora, deliberadamente:**
+
+| Tema | Por quê |
+|---|---|
+| **Câmbio e pagamentos internacionais** | SWIFT, contrato de câmbio, PIX Internacional e IOF de câmbio formam um domínio próprio, com regulação e vocabulário separados. Seria outra apostila |
+| **Tributação de investimentos** | Come-cotas, tabela regressiva de IR, IR sobre renda variável — pertence a produto de investimento, não a movimentação de dinheiro |
+| **Mercado de capitais em profundidade** | Precificação, marcação a mercado, derivativos. O capítulo 13 toca em debêntures, CRI/CRA e FIDC só até onde crédito vira papel negociável |
+| **Modelagem estatística de risco** | A apostila explica *por que* o modelo de perda esperada existe e o que ele exige do seu pipeline de dados, não como construí-lo |
+| **Manual de qualquer banco específico** | Posições e códigos aqui são do leiaute de referência. O manual da instituição sempre prevalece |
+
+**Sobre os blocos "No modelo do ASA".** Ao longo do capítulo 11 você vai encontrar caixas marcadas assim. Elas são **estudo de caso de uma implementação real** — o esquema de banco de dados de um gerador de retorno CNAB em produção — e existem para mostrar como as decisões do texto aparecem em código de verdade. Nomes como `ControleJanelaRetorno` ou `Tricon` só fazem sentido dentro daquele sistema. **Pule esses blocos sem prejuízo nenhum**: nada no resto da apostila depende deles.
+
+### O fio condutor: a Padaria do João
+
+Para que os capítulos não pareçam tópicos vizinhos, um mesmo caso atravessa o documento inteiro. Ele é banal de propósito:
+
+> **A Padaria do João vende R$ 10.000 em pães de forma para o Mercado da Esquina, a prazo, para pagamento em 30 dias.**
+
+Uma venda. Só que ela reaparece em sete lugares, e cada capítulo enxerga uma camada diferente do mesmo evento:
+
+| Camada | Onde |
+|---|---|
+| O lançamento contábil da venda | Capítulo 5 |
+| O centavo que sobra ao parcelar | Capítulo 6 |
+| A duplicata sacada contra o Mercado | Seção 13.5 |
+| O boleto emitido e a remessa CNAB | Seções 11.2 a 11.6 |
+| A antecipação do recebível no banco | Seções 11.5 e 13.6 |
+| O pagamento chegando e o retorno CNAB | Seções 11.6 e 11.7 |
+| A conciliação e o que acontece se der errado | Capítulo 15 |
+
+Sempre que a padaria voltar, ela aparece numa caixa marcada **Fio condutor**. Se você quiser ler só a história, procure por essas caixas.
 
 ---
 
@@ -140,11 +207,12 @@ Entre uma e outra existe **risco de liquidação**: a janela em que a operação
 
 ```mermaid
 graph LR
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
     A["Transação iniciada<br/>(cliente clica 'pagar')"] --> B["Compensação<br/>apura saldos líquidos<br/>entre instituições"]
     B -->|"⚠ janela de risco de liquidação"| C["Liquidação<br/>move reservas no Bacen<br/>IRREVOGÁVEL"]
     C --> D["Recursos definitivamente<br/>disponíveis"]
 
-    style C fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    class C destaque
 ```
 
 **Erro clássico de arquitetura:** dar baixa definitiva num título com base no evento de compensação. Se o fluxo é reversível até a liquidação, seu sistema precisa de um estado intermediário (`PAGO_A_CONFIRMAR` vs `LIQUIDADO`) — não um booleano `pago`.
@@ -199,48 +267,63 @@ De qualquer forma, todo sistema financeiro brasileiro precisa de um **calendári
 
 O **risco operacional** é literalmente o seu escopo de trabalho. Idempotência não é preciosismo de engenharia num sistema financeiro — é mitigação de risco regulatório: reprocessar um arquivo CNAB sem chave de deduplicação gera cobrança dupla, que gera reclamação no Bacen.
 
-### Conta de Reservas Bancárias
+### As contas do participante no Bacen
 
-Cada instituição participante direto do SPB mantém uma conta no Bacen. Toda liquidação interbancária, de qualquer trilho, termina num débito/crédito numa conta dessas. Ela precisa ter saldo suficiente **no momento** da liquidação — a conta não pode ficar negativa.
+Cada instituição participante direto do **SPB** (Sistema de Pagamentos Brasileiro — o conjunto das infraestruturas que compensam e liquidam valores no país; o capítulo 9 o destrincha) mantém conta no Bacen. Toda liquidação interbancária termina num débito e num crédito em contas desse tipo. Elas precisam ter saldo suficiente **no momento** da liquidação — não podem ficar negativas.
 
-Mas isso não significa que o banco precise "adivinhar" o caixa do dia. O Bacen oferece o **redesconto intradia**: uma operação compromissada em que a instituição vende títulos públicos ao Bacen e os recompra no mesmo dia, **sem custo**, apenas para atravessar descasamentos de horário entre pagamentos e recebimentos. Não é medida de emergência — é rotina de infraestrutura, com centenas de operações e centenas de bilhões de reais por dia. Se a devolução escorregar para o dia útil seguinte, aí sim há cobrança de taxa.
+E não é uma conta só. São duas famílias, e confundi-las é o erro conceitual mais comum sobre PIX:
 
-> **Nota importante:** o PIX **não** liquida em Reservas Bancárias. Ele usa uma conta própria, a **Conta PI**, detalhada no capítulo 10.
+| Conta | Para que serve | Quem liquida nela |
+|---|---|---|
+| **Reservas Bancárias** | Liquidação interbancária dos trilhos tradicionais | STR — TED, boleto, cartões, títulos, ações |
+| **Conta PI** (Conta Pagamentos Instantâneos) | Liquidação exclusiva do PIX, 24/7 | SPI |
+
+> **Nota importante:** o PIX **não** liquida em Reservas Bancárias. Ele usa a **Conta PI**, detalhada no capítulo 10. As duas não são mundos separados, porém: a Conta PI é **pré-financiada a partir da conta de Reservas**, por aportes e retiradas solicitados ao STR. Reservas continua sendo a raiz; o PIX apenas liquida num galho dedicado dela.
+
+Isso não significa que o banco precise "adivinhar" o caixa do dia. O Bacen oferece o **redesconto intradia**: uma operação compromissada em que a instituição vende títulos públicos ao Bacen e os recompra no mesmo dia, **sem custo**, apenas para atravessar descasamentos de horário entre pagamentos e recebimentos. Não é medida de emergência — é rotina de infraestrutura, com centenas de operações e centenas de bilhões de reais por dia. Se a devolução escorregar para o dia útil seguinte, aí sim há cobrança de taxa.
+
+#### As duas camadas contábeis de uma transferência
+
+Acompanhe uma **TED** de R$ 500 do João (banco A) para a Maria (banco B) — TED porque ela liquida em Reservas, e é o exemplo limpo da mecânica. O erro de intuição aqui é achar que o dinheiro do João "entra" na conta de reservas do banco A e sai dela. Não entra: são **duas camadas contábeis paralelas**, e três fatos que acontecem em registros diferentes.
 
 ```mermaid
 graph TB
-    subgraph BancoA["Banco A"]
-        CC1["Conta do cliente João<br/>(moeda escritural = passivo do banco A)"]
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
+
+    subgraph Camada1["Camada 1 — moeda escritural (bases de dados dos bancos)"]
+        direction LR
+        CC1["① Banco A debita<br/>a conta do João<br/>−500"]
+        CC2["③ Banco B credita<br/>a conta da Maria<br/>+500"]
     end
 
-    subgraph Bacen["Banco Central"]
-        RA["Reservas do Banco A"]
-        RB["Reservas do Banco B"]
+    subgraph Camada2["Camada 2 — moeda de banco central (Bacen)"]
+        direction LR
+        RA["Reservas do Banco A<br/>−500"] -->|"② Liquidação no STR<br/>(irrevogável)"| RB["Reservas do Banco B<br/>+500"]
     end
 
-    subgraph BancoB["Banco B"]
-        CC2["Conta da cliente Maria<br/>(moeda escritural = passivo do banco B)"]
-    end
+    CC1 -.->|"dispara, não transfere"| RA
+    RB -.->|"habilita, não transfere"| CC2
 
-    CC1 -->|"1. Débito interno<br/>(base de dados do banco A)"| RA
-    RA -->|"2. Liquidação<br/>(moeda de banco central)"| RB
-    RB -->|"3. Crédito interno<br/>(base de dados do banco B)"| CC2
-
-    style RA fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
-    style RB fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    class RA,RB destaque
 ```
 
-Repare que são **três movimentações contábeis distintas** para um único PIX do João para a Maria. Se você só modelar a primeira e a terceira, seu sistema não fecha com o extrato do Bacen.
+As setas cheias são movimento de dinheiro; as **pontilhadas são causalidade, não fluxo**. Três lançamentos distintos, em três livros distintos:
 
-### Débito × Crédito (partidas dobradas)
+| # | Onde é registrado | O que acontece |
+|---|---|---|
+| ① | Ledger do banco A | Débito na conta do João, crédito numa conta interna de trânsito |
+| ② | STR, no Bacen | Débito nas Reservas do A, crédito nas Reservas do B — **este é o único irrevogável** |
+| ③ | Ledger do banco B | Débito da conta de trânsito, crédito na conta da Maria |
 
-Todo sistema financeiro sério usa **partidas dobradas**: toda operação gera pelo menos um débito e um crédito de valor igual.
+Se você modelar só ① e ③, seu sistema não fecha com o extrato do Bacen — e, pior, não tem onde representar a janela entre ① e ②, que é exatamente onde mora o risco de liquidação.
 
-Isso não é burocracia contábil. É um invariante que funciona como *checksum* do seu sistema — se a soma não fecha, existe bug.
+**No PIX a mecânica é a mesma, trocando a camada 2:** o SPI debita a Conta PI do PSP pagador e credita a Conta PI do PSP recebedor. O que muda é a conta, o motor e o horário — não a lógica das duas camadas.
 
-E tem consequência direta de modelagem: se você guarda um campo `saldo` mutável em vez de um **ledger append-only** de lançamentos, perde a auditabilidade e a capacidade de reconstruir o estado passado. Que é exatamente o que um regulador vai pedir.
+### Débito × Crédito: o invariante
 
-> Padrão recomendado: **event sourcing / ledger imutável**. Saldo é projeção derivada, nunca a fonte da verdade. O capítulo 5 detalha esse modelo — conta contábil, lançamento, partida e as consequências de arquitetura.
+Todo sistema financeiro sério usa **partidas dobradas** — toda operação gera pelo menos um débito e um crédito de valor igual. Isso não é burocracia contábil: é um invariante que funciona como *checksum* do sistema, e se a soma não fecha, existe bug.
+
+O **capítulo 5** trata disso a sério: conta contábil, natureza, lançamento, partida, esquema de tabelas e as consequências de arquitetura. Por ora, guarde só a frase.
 
 ### Checkpoint
 
@@ -249,8 +332,15 @@ E tem consequência direta de modelagem: se você guarda um campo `saldo` mutáv
 3. Compensação e liquidação: qual delas é irrevogável?
 4. Por que o modelo LDL precisa de menos liquidez que o LBTR?
 5. Por que `data + 1 dia` é insuficiente para calcular D+1?
+6. Numa TED entre dois bancos, quantos lançamentos contábeis distintos existem e em quais livros?
+7. O PIX liquida em Reservas Bancárias?
 
-*Respostas: (1) escritural é o saldo do cliente, passivo do banco; de banco central são as reservas no Bacen, única forma de quitar obrigação entre instituições; (2) por falta de liquidez — os ativos existem mas estão travados em prazo longo enquanto os saques são hoje; (3) a liquidação; (4) porque o netting compensa obrigações mútuas e só o saldo líquido é movimentado; (5) porque D+1 conta dia útil e depende de calendário de feriados, inclusive municipais.*
+<details>
+<summary>Respostas</summary>
+
+(1) Escritural é o saldo do cliente, passivo do banco; de banco central são as reservas no Bacen, única forma de quitar obrigação entre instituições. (2) Por falta de liquidez — os ativos existem mas estão travados em prazo longo enquanto os saques são hoje. (3) A liquidação. (4) Porque o netting compensa obrigações mútuas e só o saldo líquido é movimentado. (5) Porque D+1 conta dia útil e depende de calendário de feriados, inclusive municipais. (6) Três: um no ledger do banco pagador, um no STR entre as contas de Reservas, um no ledger do banco recebedor — e só o do meio é irrevogável. (7) Não. Liquida em Conta PI, que por sua vez é pré-financiada a partir da conta de Reservas via STR.
+
+</details>
 
 ---
 
@@ -288,27 +378,26 @@ Aqui está a inversão que confunde todo dev iniciante no domínio:
 
 Ou seja: do ponto de vista do banco, seu saldo em conta é uma dívida dele com você, e a sua dívida de cartão é um bem dele.
 
-```mermaid
-graph LR
-    subgraph PASSIVO["PASSIVO + PL — de onde o dinheiro veio"]
-        P1["Depósitos de clientes<br/>(à vista e a prazo)"]
-        P2["Captações no mercado<br/>(CDB, LCI, LCA)"]
-        P3["Patrimônio Líquido<br/>(capital dos sócios)"]
-    end
+Um balanço **não é um grafo de fluxo**: nenhuma linha do passivo financia uma linha específica do ativo. Ele é uma fotografia com dois lados que somam igual — de onde o dinheiro veio, e onde ele está agora:
 
-    subgraph ATIVO["ATIVO — onde o dinheiro está aplicado"]
-        A1["Carteira de crédito<br/>(empréstimos concedidos)"]
-        A2["Títulos e valores mobiliários"]
-        A3["Reservas no Bacen + caixa"]
-    end
-
-    P1 --> A1
-    P1 --> A3
-    P2 --> A1
-    P3 --> A2
-
-    style A3 fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
 ```
+                    BALANÇO DE UM BANCO
+
+  ATIVO — onde o dinheiro está      │  PASSIVO + PL — de onde veio
+  ─────────────────────────────────┼───────────────────────────────────
+  Carteira de crédito               │  Depósitos de clientes
+  (empréstimos concedidos)          │  (à vista e a prazo)
+                                    │
+  Títulos e valores mobiliários     │  Captações no mercado
+                                    │  (CDB, LCI, LCA)
+  Reservas no Bacen + caixa         │
+                                    │  Patrimônio Líquido
+                                    │  (capital dos sócios)
+  ─────────────────────────────────┼───────────────────────────────────
+  TOTAL                             │  TOTAL  (idêntico, sempre)
+```
+
+A igualdade dos totais não é coincidência nem meta contábil: é o mesmo invariante das partidas dobradas visto de longe. Todo real que entrou pelo lado direito está em algum lugar do lado esquerdo.
 
 **Por que isso importa no código:** quando você modela lançamentos, o sinal do valor depende da perspectiva. Um crédito na conta do cliente é um aumento de passivo do banco. Se seu ledger não deixa isso explícito, você vai inverter sinal em algum relatório contábil — e vai demorar para descobrir.
 
@@ -356,8 +445,14 @@ Esse é um ponto que aparece direto em modelagem de dados:
 2. Quais são as quatro fontes de receita de um banco?
 3. Por que uma instituição de pagamento não pode emprestar o dinheiro que está na conta de pagamento do cliente?
 4. O que é descasamento de prazo e por que ele é a função econômica do banco?
+5. Por que os dois lados do balanço somam sempre o mesmo total?
 
-*Respostas: (1) passivo — é uma dívida do banco com o cliente; (2) spread de crédito, tarifas, float e tesouraria; (3) porque são recursos de terceiros e a regulação exige que fiquem segregados, fora do balanço da IP; (4) captar curto e emprestar longo — é o que permite financiar projetos de anos com depósitos sacáveis a qualquer momento, e é também a origem do risco de liquidez.*
+<details>
+<summary>Respostas</summary>
+
+(1) Passivo — é uma dívida do banco com o cliente. (2) Spread de crédito, tarifas, float e tesouraria. (3) Porque são recursos de terceiros e a regulação exige que fiquem segregados, fora do balanço da IP. (4) Captar curto e emprestar longo — é o que permite financiar projetos de anos com depósitos sacáveis a qualquer momento, e é também a origem do risco de liquidez. (5) Porque todo recurso que entrou (passivo e PL) está necessariamente aplicado em algum lugar (ativo) — é o invariante das partidas dobradas na escala do balanço inteiro.
+
+</details>
 
 ---
 
@@ -555,8 +650,19 @@ Três níveis distintos, e confundi-los é erro clássico de modelagem:
 
 Uma transação, quatro partidas, quatro contas contábeis diferentes — e fecha.
 
+> **Fio condutor — a Padaria do João.** A venda de R$ 10.000 a prazo para o Mercado da Esquina, do ponto de vista do ledger da padaria, é isto:
+>
+> | Conta | Débito | Crédito |
+> |---|---|---|
+> | Duplicatas a receber (ativo) | 10.000,00 | |
+> | Receita de vendas (receita) | | 10.000,00 |
+> | **Total** | **10.000,00** | **10.000,00** ✓ |
+>
+> Repare no que **não** aconteceu: nenhum centavo entrou no caixa. O regime de competência (adiante neste capítulo) reconhece a receita quando a venda ocorre, não quando o dinheiro chega. Esse descolamento entre o fato econômico e o fluxo de caixa é precisamente o motivo de existir a antecipação de recebíveis — a padaria já tem o lucro no papel e ainda não tem o dinheiro para comprar farinha.
+
 ```mermaid
 graph TB
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
     EV["Evento de negócio<br/>'Desembolso de empréstimo'"] --> LC["Lançamento contábil<br/>(atômico, balanceado)"]
     LC --> P1["Partida: D — Operações de crédito"]
     LC --> P2["Partida: C — Depósito do cliente"]
@@ -569,7 +675,7 @@ graph TB
     P4 --> RZ
     RZ --> BAL["Balancete<br/>(Σ D = Σ C)"]
 
-    style LC fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    class LC destaque
 ```
 
 ### Diário, Razão e Balancete
@@ -665,7 +771,20 @@ Antes de seguir, confira se você consegue responder sem voltar ao texto:
 5. Por que o saldo não deve ser a fonte da verdade?
 6. Seu sistema precisa corrigir um lançamento de um mês já fechado. O que se faz?
 
-*Respostas curtas: (1) todo evento econômico é um deslocamento de valor — crédito é a origem, débito é o destino; (2) débito em caixa/reservas, crédito em depósitos à vista do cliente; (3) uma transação é o fato de negócio e pode gerar N lançamentos, cada um com 2..N partidas; (4) para preservar a semântica contábil e evitar ambiguidade de sinal na agregação; (5) porque ele é projeção derivada — mantê-lo como verdade destrói a auditabilidade; (6) lançamento de ajuste no período aberto, nunca `UPDATE` no período fechado.*
+<details>
+<summary>Respostas</summary>
+
+(1) Todo evento econômico é um deslocamento de valor — crédito é a origem, débito é o destino. (2) Débito em caixa/reservas, crédito em depósitos à vista do cliente. (3) Uma transação é o fato de negócio e pode gerar N lançamentos, cada um com 2..N partidas. (4) Para preservar a semântica contábil e evitar ambiguidade de sinal na agregação. (5) Porque ele é projeção derivada — mantê-lo como verdade destrói a auditabilidade. (6) Lançamento de ajuste no período aberto, nunca `UPDATE` no período fechado.
+
+</details>
+
+### Exercícios
+
+Checkpoint verifica se você lembra; exercício verifica se você consegue fazer. Estes três valem uma tarde:
+
+1. **Modele o ledger mínimo** com as duas tabelas desta seção e escreva um teste de propriedade (Hypothesis, FsCheck, jqwik — o que houver na sua stack) que gere lançamentos aleatórios de 2 a 8 partidas e prove que **nenhum lançamento desbalanceado consegue ser gravado**. O teste precisa falhar se você remover a validação.
+2. **Prove que a projeção de saldo é reconstituível.** Popule 10.000 lançamentos, materialize um snapshot de saldos por conta, insira mais 1.000, recalcule do zero e compare. A diferença entre snapshot e recálculo tem de ser exatamente o delta dos 1.000 novos.
+3. **Contabilize o desembolso do capítulo** (R$ 10.000, IOF R$ 150, tarifa R$ 50) e depois a **quitação antecipada** no mês seguinte, com estorno proporcional do IOF. Verifique que o par de lançamentos, somado, não cria nem destrói valor.
 
 ---
 
@@ -708,6 +827,41 @@ i_anual = (1 + i_mensal)^12 - 1
 
 2% ao mês não é 24% ao ano — é 26,82% ao ano.
 
+### Indexadores: CDI, Selic, IPCA e TR
+
+Quase nenhum contrato relevante no Brasil tem taxa fixa e pronto. Ele tem **um indexador mais um spread**, ou **um percentual de um indexador** — e essas duas formas não são a mesma conta. Se o seu sistema guarda `taxa DECIMAL(9,6)` e nada mais, ele não consegue representar o produto que a área comercial vende.
+
+| Indexador | O que é | Onde aparece |
+|---|---|---|
+| **Selic** | Taxa básica, definida pelo Copom | Referência de política monetária; remunera a Conta PI e o Tesouro Selic |
+| **CDI** | Taxa média dos empréstimos de um dia entre bancos, apurada e divulgada pela B3 | O indexador mais usado do mercado: CDB, LCI, LCA, capital de giro, praticamente todo contrato PJ |
+| **IPCA** | Índice oficial de inflação, apurado pelo IBGE | Títulos e contratos de longo prazo, aluguéis, correção monetária |
+| **TR** | Taxa Referencial, calculada pelo Bacen | Poupança e financiamento imobiliário no SFH |
+
+O **CDI** merece destaque porque é o que você mais vai encontrar e o que a apostila até agora não tinha mencionado. Ele nasce do mercado interbancário: bancos com sobra de caixa emprestam para bancos com falta, por um dia, e a taxa média dessas operações é o **DI de um dia**. Acumulado, vira o CDI. Na prática ele orbita muito perto da Selic — a diferença costuma ser de frações de ponto —, mas é um número de mercado, não uma decisão do Copom.
+
+**As duas formas de contratar, e por que elas divergem:**
+
+```
+"120% do CDI"      → taxa = CDI × 1,20        (multiplicativa)
+"CDI + 2% a.a."    → taxa = CDI + 0,02        (aditiva)
+```
+
+Com CDI a 10% ao ano, a primeira dá 12% e a segunda dá 12%. Empatam. Agora deixe o CDI cair para 5%: a primeira vira 6%, a segunda vira 7%. **O mesmo contrato "equivalente" descola quando o indexador se move** — e essa é exatamente a razão de a escolha entre percentual e spread ser uma negociação, não um detalhe de redação.
+
+A composição correta, aliás, não é soma direta: para juntar indexador e spread com rigor, usa-se a fórmula multiplicativa.
+
+```
+taxa_efetiva = (1 + indexador) × (1 + spread) − 1
+```
+
+**O que isso exige do seu modelo de dados:**
+
+- Guarde **indexador, tipo de composição (percentual ou spread) e o percentual/spread** em campos separados. Nunca só a taxa resultante, porque ela muda todo dia.
+- Guarde a **série histórica** do indexador com data. Recalcular uma parcela de seis meses atrás exige o CDI *daquele dia*, não o de hoje.
+- Trate **feriado e dia sem divulgação**. CDI é apurado em dia útil; a regra de qual valor usar num feriado vem do contrato.
+- **Capitalização é diária em dia útil** na convenção brasileira mais comum (base 252), não mensal. Errar a base é o bug de juros mais silencioso que existe.
+
 ### Sistemas de amortização: Price × SAC
 
 | | **Price (Tabela Price)** | **SAC** |
@@ -727,6 +881,24 @@ Toda parcela, em ambos, decompõe-se em **amortização + juros**. Seu sistema p
 
 Se seu sistema exibe uma taxa ao cliente sem calcular CET corretamente, isso não é bug de UI — é descumprimento regulatório.
 
+### IOF: a fórmula que quase nunca é escrita
+
+O **IOF (Imposto sobre Operações Financeiras)** aparece em toda operação de crédito e é citado como se fosse óbvio. Ele tem **dois componentes somados**:
+
+```
+IOF = IOF_fixo + IOF_diário
+
+IOF_fixo    = principal × alíquota_fixa
+IOF_diário  = principal × alíquota_diária × dias         (limitado a 365 dias)
+```
+
+A alíquota adicional fixa é a mesma para PF e PJ; a diária é diferente entre elas, e existe um **teto**: o componente diário para em 365 dias, então uma operação de três anos paga o mesmo IOF diário de uma de um ano. Em operações com liberação parcelada, o imposto incide sobre cada liberação.
+
+Duas armadilhas de implementação:
+
+1. **As alíquotas mudam por decreto**, com frequência e às vezes com vigência retroativa a uma data específica. Elas são **configuração com vigência temporal**, nunca constante — e o seu sistema precisa conseguir recalcular uma operação antiga com a alíquota que valia naquela data.
+2. **O IOF entra no CET**, e é uma das razões de o CET ser sempre maior que a taxa anunciada.
+
 ### Encargos de atraso
 
 Limites clássicos aplicados a boletos e crédito ao consumidor:
@@ -744,6 +916,28 @@ O cálculo `pro rata die` exige, de novo, **calendário de dias úteis/corridos 
 - **Feriados** — nacionais, estaduais e municipais afetam compensação. Precisa vir de fonte confiável e atualizável, nunca hardcoded.
 - **Data de operação × data de liquidação × data contábil** — são três datas distintas e seu modelo precisa das três.
 
+### Testando sistema financeiro
+
+A apostila afirmou no capítulo 2 que teste não é opcional aqui. Vale dizer o que isso significa na prática, porque teste de sistema financeiro tem um perfil próprio: o que quebra raramente é o caminho feliz.
+
+**1. Teste de propriedade para invariantes.** Regra de negócio financeira quase sempre pode ser escrita como uma propriedade universal, e propriedade universal é o que testes baseados em propriedade verificam bem:
+
+| Invariante | Como testar |
+|---|---|
+| `Σ débitos = Σ créditos` | Gere lançamentos aleatórios; nenhum desbalanceado pode ser aceito |
+| `Σ parcelas = principal` | Gere valores e prazos aleatórios; a soma tem de fechar ao centavo |
+| `Σ amortizações = principal` | Idem, decompondo cada parcela em amortização + juros |
+| `disponível = aprovado − utilizado − reservado` | Gere sequências aleatórias de autorização, captura e expiração |
+| Idempotência | Aplicar o mesmo evento N vezes tem de dar o mesmo estado que aplicá-lo uma vez |
+
+**2. Fixtures de arquivo, versionadas.** Guarde arquivos CNAB reais (anonimizados) no repositório, incluindo os **quebrados**: linha com 239 caracteres, acento no nome do favorecido, trailer com contagem errada, ocorrência desconhecida, lote sem trailer. O teste de parser que só usa arquivo bem-formado testa o cenário que nunca dá problema.
+
+**3. Teste de reprocessamento.** Rode o mesmo arquivo duas vezes e compare o estado final. Depois rode-o pela metade, mate o processo, e rode de novo. Sistema financeiro cai no meio — é questão de quando.
+
+**4. Teste de fronteira de data.** Vira do ano, ano bissexto, feriado móvel, horário de verão (que o Brasil não tem hoje, mas datas históricas têm), e o dia em que o horário de corte cai num feriado municipal da praça. Congele o relógio nos testes; nunca use `now()` direto.
+
+**5. Homologação bancária é um ambiente, e é lento.** Antes de produção, todo layout novo passa por homologação com a instituição: você envia arquivos de teste, um analista do banco confere, devolve apontamentos. O ciclo costuma levar **semanas**, roda em horário comercial e cada rodada de correção reinicia a fila. Planeje o cronograma contando isso — é a dependência externa que mais atrasa entrega nesse domínio, e ela não acelera com mais desenvolvedores.
+
 ### Checkpoint
 
 1. Por que `float`/`double` não serve para dinheiro?
@@ -751,8 +945,21 @@ O cálculo `pro rata die` exige, de novo, **calendário de dias úteis/corridos 
 3. 2% ao mês equivale a 24% ao ano?
 4. Qual a diferença entre a taxa de juros anunciada e o CET?
 5. Em Price e SAC, o que muda para o cliente?
+6. "120% do CDI" e "CDI + 2%" rendem o mesmo? Sempre?
+7. Por que o IOF de uma operação de três anos não é o triplo do de uma operação de um ano?
 
-*Respostas: (1) IEEE 754 não representa decimais exatamente e o erro acumula, quebrando o fechamento contábil; (2) a soma das parcelas tem de ser igual ao valor original — o centavo residual vai para uma parcela específica; (3) não: (1,02)¹² − 1 = 26,82% ao ano; (4) o CET inclui tarifas, tributos e seguros, não só os juros; (5) na Price a parcela é fixa, na SAC ela começa maior e vai caindo, com menos juros totais.*
+<details>
+<summary>Respostas</summary>
+
+(1) IEEE 754 não representa decimais exatamente e o erro acumula, quebrando o fechamento contábil. (2) A soma das parcelas tem de ser igual ao valor original — o centavo residual vai para uma parcela específica. (3) Não: (1,02)¹² − 1 = 26,82% ao ano. (4) O CET inclui tarifas, tributos e seguros, não só os juros. (5) Na Price a parcela é fixa; na SAC ela começa maior e vai caindo, com menos juros totais. (6) Só coincidem num valor específico do CDI. Uma é multiplicativa e a outra aditiva, então elas descolam assim que o indexador se move — para baixo, o spread fica melhor para o investidor; para cima, o percentual. (7) Porque o componente diário do IOF é limitado a 365 dias; passado esse teto, prazo maior não aumenta o imposto.
+
+</details>
+
+### Exercícios
+
+1. **Implemente a Price e prove que ela fecha.** R$ 10.000 em 12 parcelas a 2% a.m. Calcule a parcela, decomponha cada uma em amortização e juros, e verifique dois invariantes: a soma das amortizações é exatamente R$ 10.000,00, e o saldo devedor após a 12ª parcela é exatamente zero. Faça o mesmo em SAC e compare o total de juros.
+2. **Escreva o rateio com centavo residual** e submeta-o a um teste de propriedade: para qualquer valor entre R$ 0,01 e R$ 1.000.000,00 e qualquer número de parcelas de 1 a 420, a soma das parcelas tem de ser igual ao valor original. Depois troque `HALF_UP` por `HALF_EVEN` e veja quantos casos mudam de resultado.
+3. **Modele um contrato indexado.** Guarde indexador, tipo de composição e spread separados, mais uma série histórica diária. Depois calcule quanto rendeu R$ 1.000 a "110% do CDI" ao longo de um período de sua escolha — e prove que o resultado não muda se você rodar o cálculo amanhã.
 
 ---
 
@@ -766,6 +973,8 @@ O Sistema Financeiro Nacional (SFN) tem uma separação clássica entre quem **n
 - **Susep** — seguros e capitalização. **Previc** — previdência complementar fechada.
 
 Do ponto de vista de um dev de banco, o que importa é: **CMN decide a regra, Bacen constrói e fiscaliza a infraestrutura técnica que sua aplicação vai consumir** (APIs do PIX, STR, SCR, Open Finance, etc.).
+
+> **Analogia:** é a separação entre especificação e implementação de referência. O CMN publica a RFC — diz o que tem de valer, em linguagem de norma, sem uma linha de código. O Bacen escreve o servidor que todo mundo tem de falar com, publica o manual de integração e ainda audita se você está seguindo o protocolo. Quando alguém te manda "isso é exigência do CMN", leia "está na spec"; quando manda "o Bacen rejeitou", leia "o servidor devolveu erro".
 
 ```mermaid
 graph TD
@@ -812,7 +1021,21 @@ Uma diferença que aparece direto em specs de integração:
 | Participa do STR diretamente? | Normalmente sim | Frequentemente indireto, via **banco liquidante** (instituição com conta no Bacen que liquida em nome de terceiros) |
 | Regulador | Bacen, sob regras do CMN | Bacen, regime específico de IP |
 
-Isso importa porque, ao integrar um parceiro, você precisa saber se ele é **participante direto** do SPB (tem conta de Reservas Bancárias no Bacen) ou **indireto** (liquida através de um banco liquidante) — isso muda o desenho de conciliação e o tempo de liquidação.
+Isso importa porque, ao integrar um parceiro, você precisa saber se ele é **participante direto** do SPB (tem conta própria no Bacen — Reservas Bancárias, e Conta PI se participa do SPI) ou **participante indireto** (não tem conta no Bacen e liquida através de um **banco liquidante**, que é a instituição com conta que liquida em nome de terceiros). Isso muda o desenho de conciliação e o tempo de liquidação: você concilia contra quem liquida, não contra o Bacen.
+
+### Checkpoint
+
+1. Quem normatiza e quem supervisiona: qual é a diferença prática entre CMN e Bacen para o seu backlog?
+2. Uma instituição de pagamento pode emprestar o dinheiro que está na conta de pagamento do cliente?
+3. O que muda na sua conciliação quando o parceiro é participante indireto do SPB?
+4. Quem regula uma corretora: Bacen ou CVM?
+
+<details>
+<summary>Respostas</summary>
+
+(1) O CMN publica a regra (resoluções) e não executa nada; o Bacen constrói, opera e fiscaliza a infraestrutura técnica. Uma exigência "do CMN" vem como norma; um "o Bacen rejeitou" vem como erro de integração. (2) Não — são recursos de terceiros, segregados e fora do balanço da IP. (3) Você passa a conciliar contra o banco liquidante, não contra o Bacen, e o tempo de liquidação ganha um salto a mais. (4) CVM, no mercado de capitais — embora o Bacen regule as instituições financeiras que também atuam ali.
+
+</details>
 
 ---
 
@@ -838,19 +1061,60 @@ Todo participante do SPB recebe um código numérico único de 8 dígitos, o **I
 
 Na prática, você vai precisar dos dois e de uma tabela de correspondência entre eles — o Bacen publica a relação oficial de participantes com ISPB e código COMPE. Nem toda instituição com ISPB tem código COMPE (é o caso de muitas IPs), o que costuma quebrar integrações que assumem que todo participante tem os dois.
 
+### Certificados: a parte que ninguém documenta e todo mundo sofre
+
+mTLS e HSM explicam *como* a autenticação funciona. O que costuma faltar no material é a operação disso — e certificado é operação, não configuração.
+
+Os certificados usados na RSFN e nas APIs do SFN vêm da **ICP-Brasil** (Infraestrutura de Chaves Públicas Brasileira), a hierarquia oficial de certificação digital do país, com a raiz mantida pelo ITI e emissão delegada a Autoridades Certificadoras credenciadas. É a mesma família do e-CNPJ que a empresa já usa para nota fiscal, com finalidades e perfis distintos.
+
+O ciclo de vida que o seu time vai operar:
+
+| Etapa | O que acontece | Onde dói |
+|---|---|---|
+| **Emissão** | Geração do par de chaves, validação presencial ou por vídeo, emissão pela AC | Leva dias, exige pessoa jurídica com representante legal disponível |
+| **Instalação** | Chave privada entra no HSM; certificado é registrado no Bacen e nos parceiros | Cada contraparte tem seu próprio processo de registro, e nenhum é instantâneo |
+| **Rotação** | Antes de vencer, emitir o novo, registrar em todos, virar o tráfego | O ponto de falha real: o novo precisa estar registrado **em todas as contrapartes** antes de o antigo expirar |
+| **Revogação** | Comprometimento de chave, mudança societária, encerramento | Efeito imediato e sem aviso prévio ao seu sistema |
+| **Expiração** | Validade típica de 1 a 3 anos | Vence às 23h59 de um sábado, sem exceção |
+
+Três práticas que evitam o incidente clássico:
+
+- **Monitore validade como métrica, com alerta em dias restantes** (60, 30, 7). Um certificado vencido derruba a integração inteira de uma vez, sem degradação gradual — é o tipo de falha que não avisa antes.
+- **Suporte dois certificados válidos simultaneamente** durante a janela de rotação. Trocar de forma atômica exige que todas as contrapartes virem no mesmo instante, o que não acontece.
+- **Nunca versione chave privada em repositório**, nem "temporariamente para o ambiente de homologação". A chave vive no HSM; o que circula é a requisição assinada.
+
+### Checkpoint
+
+1. Por que não basta ter uma chave de API para chamar o DICT?
+2. Qual a diferença entre TLS e mTLS, e o que o HSM acrescenta?
+3. ISPB substituiu o código COMPE?
+4. Qual é a falha mais previsível de uma integração com o Bacen, e como se evita?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Porque o acesso pressupõe estar dentro da RSFN, a rede privada que interliga o Bacen às instituições, com certificado previamente registrado — a identidade do participante é o certificado, não um token. (2) No TLS comum só o servidor prova identidade; no mTLS as duas pontas apresentam certificado. O HSM guarda a chave privada em hardware dedicado e assina sem nunca expô-la ao sistema operacional. (3) Não — os dois coexistem: o COMPE segue em arquivos e produtos legados, o ISPB identifica o participante no SPB, e nem toda IP tem COMPE. (4) Certificado vencido. Evita-se monitorando validade com alerta em dias restantes e mantendo dois certificados válidos durante a rotação.
+
+</details>
+
 ---
 
 ## 9. Sistema de Pagamentos Brasileiro (SPB)
 
 O SPB é o guarda-chuva que engloba **todas** as infraestruturas de mercado financeiro (IMFs) responsáveis por compensar e liquidar valores no Brasil — PIX, TED, boleto, cartões, títulos públicos, ações. Pense nele como "o barramento de liquidação nacional", com o Bacen operando a peça mais crítica: o **STR**.
 
-- **STR (Sistema de Transferência de Reservas)** — operado pelo próprio Bacen. É onde ocorre a **Liquidação Bruta em Tempo Real (LBTR)**: cada transação é liquidada uma a uma, em moeda de banco central, sem esperar lote. É o "coração" do SPB — todo saldo final entre bancos passa por aqui, nas contas de Reservas Bancárias que cada banco mantém no Bacen.
-- **CIP / Núclea** — câmara privada (associação sem fins lucrativos, hoje rebatizada "Núclea") responsável por **compensar** grande parte do varejo: boletos, cartões e TED. O SPI (motor do PIX) é operado pelo próprio Bacen — a Núclea atua no PIX prestando serviços de conectividade e tecnologia às instituições participantes, não operando o motor de liquidação. Compensação ≠ liquidação: a Núclea apura o líquido devido entre bancos; quem efetivamente move o dinheiro entre as contas de reserva é o STR.
+- **STR (Sistema de Transferência de Reservas)** — operado pelo próprio Bacen. É onde ocorre a **Liquidação Bruta em Tempo Real (LBTR)**: cada transação é liquidada uma a uma, em moeda de banco central, sem esperar lote. É o "coração" do SPB — o saldo final entre bancos nos trilhos tradicionais passa por aqui, nas contas de Reservas Bancárias que cada banco mantém no Bacen.
+- **SPI (Sistema de Pagamentos Instantâneos)** — também operado pelo Bacen, também **LBTR**, mas dedicado ao PIX e rodando 24/7/365. Liquida entre **Contas PI**, não entre Reservas. É motor de **liquidação**, não câmara de compensação — o capítulo 10 detalha.
+- **CIP / Núclea** — câmara privada (associação sem fins lucrativos, hoje rebatizada "Núclea") responsável por **compensar** grande parte do varejo, por meio de dois sistemas que vale nomear: o **SILOC**, que compensa boletos, DOC e TEC em modelo LDL com netting multilateral, e o **SITRAF**, que processa TED dentro do seu horário de funcionamento. No PIX, a Núclea presta serviços de conectividade e tecnologia às instituições participantes — não opera o motor de liquidação. Compensação ≠ liquidação: a Núclea apura o líquido devido entre bancos; quem efetivamente move o dinheiro entre as contas de reserva é o STR.
 - **SELIC** — sistema do Bacen para custódia e liquidação de **títulos públicos federais**.
 - **B3** — liquida ações, derivativos e renda fixa privada.
 
+**Um ponto que o diagrama abaixo torna explícito: TED tem dois caminhos.** Dentro do horário do SITRAF, a ordem trafega pela Núclea, que apura e aciona o STR. Fora dele — e para valores acima do limite operacional da câmara — a instituição envia a ordem diretamente ao STR. Nos dois casos a liquidação final acontece no mesmo lugar; o que muda é o caminho até lá. Se alguém disser que "TED passa pela Núclea" e outra pessoa disser que "TED vai direto ao STR", as duas estão certas em contextos diferentes.
+
 ```mermaid
 graph LR
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
+
     subgraph Varejo["Camada de varejo (o que o cliente final vê)"]
         PIX_APP["App do banco: PIX"]
         BOLETO_APP["Emissão/pagamento de boleto"]
@@ -859,33 +1123,75 @@ graph LR
         INVEST_APP["Compra de ações<br/>e investimentos"]
     end
 
-    subgraph Compensacao["Compensação (apuração do saldo líquido)"]
-        SPI["SPI — Sistema de Pagamentos Instantâneos<br/>(Bacen, motor do PIX)"]
-        NUCLEA["Núclea (ex-CIP)<br/>boletos, cartões, TED historicamente"]
+    subgraph Compensacao["Compensação — apuração do saldo líquido (câmaras)"]
+        NUCLEA["Núclea (ex-CIP)<br/>SILOC: boleto, DOC, TEC<br/>SITRAF: TED"]
         B3C["B3<br/>ações, derivativos, renda fixa privada"]
     end
 
-    subgraph Liquidacao["Liquidação final (Bacen)"]
-        STR["STR — Sistema de Transferência de Reservas<br/>LBTR: liquidação bruta em tempo real"]
-        SELIC["SELIC — títulos públicos federais"]
+    subgraph Liquidacao["Liquidação — movimento definitivo (Bacen)"]
+        STR["STR — LBTR<br/>trilhos tradicionais"]
+        SPI["SPI — LBTR 24/7<br/>PIX"]
+        SELIC["SELIC — títulos públicos"]
     end
 
-    RESERVAS["Contas de Reservas Bancárias<br/>(cada banco tem uma no Bacen)"]
+    subgraph Contas["Contas do participante no Bacen"]
+        RESERVAS["Reservas Bancárias"]
+        CONTAPI["Conta PI"]
+    end
 
     PIX_APP --> SPI
     BOLETO_APP --> NUCLEA
     TED_APP --> NUCLEA
+    TED_APP -.->|"fora do horário da câmara<br/>ou valor elevado"| STR
     CARTAO_APP --> NUCLEA
     INVEST_APP --> B3C
 
-    SPI --> STR
     NUCLEA --> STR
     B3C --> STR
     STR --> RESERVAS
     SELIC --> RESERVAS
+    SPI --> CONTAPI
+    RESERVAS -->|"pré-financiamento<br/>via STR"| CONTAPI
+
+    class RESERVAS,CONTAPI destaque
 ```
 
-**Para o dev:** se seu sistema faz uma TED ou processa boleto, ele está, em algum nível, gerando eventos que passam pela Núclea antes de virarem liquidação final no STR. Já o PIX tem um trilho próprio e mais direto — o **SPI** — que veremos a seguir.
+Duas leituras que o diagrama deixa explícitas e que a maior parte do material sobre SPB embaralha:
+
+1. **SPI não é câmara.** Ele está do lado da liquidação, junto do STR, porque é LBTR: liquida uma transação por vez, sem apurar saldo líquido de ninguém. Colocá-lo ao lado da Núclea desfaria a distinção compensação × liquidação que o capítulo 3 chamou de a mais importante da apostila.
+2. **Conta PI é galho de Reservas.** A seta de pré-financiamento é o que amarra as duas camadas: o participante move recursos de Reservas para a Conta PI, via STR, antes de precisar deles no PIX.
+
+### O catálogo de mensagens do SFN
+
+Toda comunicação com os sistemas centrais do Bacen é **mensagem catalogada**, não chamada REST livre. O Bacen publica o **Catálogo de Serviços do SFN**, que define cada mensagem, seu leiaute XML, quem pode enviá-la e em que fluxo ela cabe.
+
+Os códigos seguem o padrão `<grupo><número>`, e você vai encontrá-los crus em log e em manual de integração:
+
+| Mensagem | Grupo | O que faz |
+|---|---|---|
+| `STR0004` | STR | Transferência de fundos entre contas no Bacen por conta de terceiros — o esqueleto da TED |
+| `STR0008` | STR | Lançamento por conta própria da instituição |
+| `SEL1009` | Selic | Instituição requisita liquidez em Conta PI (a linha de redesconto do SPI) |
+| `PAG` / `SPB` | Diversos | Famílias específicas por sistema e produto |
+
+O PIX é a exceção que confirma a regra: ele usa **ISO 20022** (`pacs.008`, `pacs.004`) em vez do catálogo legado, porque nasceu depois e alinhado ao padrão internacional. Quando você vir alguém falando "STR0004" e outra pessoa falando "pacs.008", são dois dialetos da mesma ideia — mensagem estruturada, com contrato rígido, trafegando na RSFN.
+
+**Para o dev:** se seu sistema processa boleto, ele gera eventos que passam pela Núclea antes de virarem liquidação no STR. Se faz TED, o caminho depende do horário. E se faz PIX, ele não toca em nenhuma câmara — vai direto ao SPI, que é o assunto do próximo capítulo.
+
+### Checkpoint
+
+1. O SPI é uma câmara de compensação? Por quê?
+2. A Núclea opera o motor de liquidação do PIX?
+3. Quais são os dois caminhos possíveis de uma TED até a liquidação final?
+4. O que é pré-financiamento da Conta PI e por que ele existe?
+5. Qual a diferença entre a taxa Selic e o sistema SELIC?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Não. É motor de liquidação LBTR — liquida uma transação por vez, sem apurar saldo líquido, o que é a definição do que compensação faz. (2) Não. O SPI é operado pelo Bacen; a Núclea presta conectividade e tecnologia às instituições participantes. (3) Pela Núclea (SITRAF), que apura e aciona o STR, ou diretamente ao STR fora do horário da câmara. A liquidação final é a mesma nos dois casos. (4) É a transferência de recursos da conta de Reservas para a Conta PI, via STR, antes de serem necessários. Existe porque a Conta PI não pode ficar negativa e o PIX roda 24/7, inclusive quando o STR está fechado. (5) A taxa Selic é a taxa básica de juros definida pelo Copom; o sistema SELIC é a infraestrutura de custódia e liquidação de títulos públicos federais. Mesmo nome, coisas diferentes.
+
+</details>
 
 ---
 
@@ -935,52 +1241,111 @@ sequenceDiagram
 
 **Por que isso importa para o dev:**
 
-- **Gestão de caixa 24/7.** Como o PIX roda fora do horário do STR e a Conta PI não pode zerar, o participante precisa provisionar liquidez para noites, fins de semana e feriados. Existe até um **redesconto no SPI** (desde nov/2020) para necessidades de liquidez fora do horário regular do STR — nesse caso, com custo.
+- **Gestão de caixa 24/7.** Como o PIX roda fora do horário do STR e a Conta PI não pode zerar, o participante precisa provisionar liquidez para noites, fins de semana e feriados. Existe até um **redesconto no SPI** para necessidades de liquidez fora do horário regular do STR — nesse caso, com custo. A linha nasceu junto com o PIX, pela Resolução BCB nº 20/2020, e hoje é disciplinada pela **Resolução BCB nº 175/2021**, que a revogou e consolidou junto com o redesconto do STR. A solicitação trafega pelo Selic, na mensagem `SEL1009`.
 - **Falha por saldo insuficiente é um cenário real**, não teórico. Seu tratamento de erro precisa distinguir "recusado pelo recebedor" de "sem liquidez no participante".
 - **Participante direto × indireto.** Só o direto tem Conta PI; o indireto liquida através de um direto. Isso muda o desenho de conciliação — você concilia contra quem liquida, não contra o Bacen.
 
 > **Curiosidade que vale citar em code review:** a idempotência no PIX não é boa prática opcional — a regulamentação do Bacen **exige** que os participantes preparem seus sistemas para observar o princípio da idempotência.
 
-### Cobranças (QR Code / `cob`, `cobv`)
+### O DICT além da consulta
 
-Do lado do recebedor, a API PIX expõe endpoints padronizados como `/cob` (cobrança imediata) e `/cobv` (cobrança com vencimento), além de webhooks para notificação assíncrona de pagamento — é o que você provavelmente já implementou se gerou QR Codes PIX dinâmicos. A API segue **versionamento semântico** (major/minor/patch) e é a mesma especificação para qualquer PSP, o que padroniza a integração de gateways/ERPs com múltiplos bancos.
+Material sobre PIX quase sempre para na resolução de chave. Mas quem implementa o lado do PSP descobre rápido que o DICT tem um conjunto de operações com estados, prazos e efeitos jurídicos — e que cada uma delas vira uma máquina de estados no seu sistema.
+
+#### Cadastro, exclusão e o limite de chaves
+
+Cada chave pertence a **uma conta transacional só**. O PSP cadastra, consulta e exclui chaves do seu próprio cliente. Os limites de quantidade de chaves por conta são regulatórios e diferentes para PF e PJ — e são configuração, não constante.
+
+#### Reivindicação: portabilidade × posse
+
+Aqui está a operação que mais gera bug, porque são **duas coisas diferentes com o mesmo mecanismo**:
+
+| Tipo | Quando acontece | Quem confirma |
+|---|---|---|
+| **Portabilidade** | A chave já é sua e você quer levá-la para outro PSP | O titular confirma no PSP **atual** (doador) |
+| **Posse** (*ownership claim*) | A chave está cadastrada por outra pessoa e você prova ser o dono — telefone reciclado, e-mail antigo | O titular atual precisa reagir, ou perde por decurso de prazo |
+
+O fluxo é assimétrico de propósito. Numa portabilidade, silêncio do doador **não** entrega a chave automaticamente do mesmo jeito que numa reivindicação de posse — os prazos e o desfecho do silêncio diferem, e estão no Manual Operacional do DICT, que é atualizado com frequência.
+
+O que isso exige do seu sistema:
+
+- **A reivindicação é uma entidade com ciclo de vida próprio**, não um campo na chave: aberta, aguardando confirmação, confirmada, cancelada, expirada. Ela tem prazo, e prazo que expira sozinho precisa de um agendador, não de um `if` no momento da consulta.
+- **Notificar o cliente é requisito, não cortesia.** Se a chave dele está sendo reivindicada e ele não é avisado, ele perde a chave por inação — e a reclamação vai para a ouvidoria.
+- **O estado do DICT é a verdade, o seu é cache.** Reconcilie periodicamente.
+
+#### Relato de infração (*infraction report*)
+
+Quando um PSP identifica indício de fraude numa transação, ele registra um **relato de infração** no DICT contra a conta recebedora. É o gatilho do MED (capítulo 15) e o mecanismo pelo qual a informação de fraude circula entre instituições que não têm contrato entre si.
+
+Do lado de quem recebe um relato, existe prazo para analisar e responder — aceitando ou rejeitando. Ignorar não é uma opção disponível.
+
+#### Devolução: o `pacs.004`
+
+O capítulo 15 trata da devolução pelo lado do MED, que é a visão de produto. Pelo lado da mensageria, devolver um PIX é enviar um **`pacs.004`** (*payment return*), que carrega o identificador da transação original e um **código de motivo** padronizado — devolução por solicitação do pagador, por fraude confirmada, por erro operacional do PSP, por conta encerrada.
+
+Três coisas que decorrem disso e que mudam a modelagem:
+
+1. **Devolução é transação nova, com identidade própria.** Ela tem seu próprio `EndToEndId` e referencia a original. Não é um `UPDATE status = 'devolvido'` na transação que já existe.
+2. **Devolução parcial existe.** O valor devolvido pode ser menor que o original, e pode haver várias devoluções para a mesma transação.
+3. **Devolução tem prazo e tem motivo tipado.** O motivo define o tratamento contábil e a resposta ao cliente; guardá-lo como texto livre é jogar fora a informação.
+
+### Cobranças e QR Code (`cob`, `cobv`)
+
+Do lado do recebedor, a API PIX expõe endpoints padronizados como `/cob` (cobrança imediata) e `/cobv` (cobrança com vencimento), além de webhooks para notificação assíncrona de pagamento — é o que você provavelmente já implementou se gerou QR Codes PIX dinâmicos. A API segue **versionamento semântico** (major/minor/patch) e é a mesma especificação para qualquer PSP, o que padroniza a integração de gateways e ERPs com múltiplos bancos.
+
+**Os dois tipos de QR não são variações de estilo — são objetos diferentes:**
+
+| | **QR estático** | **QR dinâmico** |
+|---|---|---|
+| O que o código carrega | A chave e, opcionalmente, um valor fixo | Uma **URL** que o app do pagador consulta para obter os dados |
+| Valor | Fixo ou aberto (o pagador digita) | Definido pelo emissor, por cobrança |
+| Reutilizável | Sim — o mesmo adesivo na parede da padaria serve para sempre | Não — um por cobrança |
+| Identificador | Sem **TXID** útil, ou com um TXID fixo | TXID único por cobrança |
+| Conciliação | Difícil: várias pessoas pagam o mesmo QR | Trivial: cada pagamento casa com uma cobrança |
+| Onde se usa | Balcão, feira, doação | E-commerce, boleto-PIX, cobrança emitida |
+
+O **TXID** (*transaction identifier*) é o campo que amarra a cobrança ao pagamento. É uma cadeia alfanumérica definida pelo **recebedor**, entregue no QR e devolvida na liquidação — a chave de correlação equivalente ao "seu número" do boleto. Ele tem limites de tamanho por contexto (o padrão PIX admite até 35 posições em cobrança; o CNAB, como a seção 11.7 mostra, corta em 30), e essa divergência de limite é fonte real de bug em quem gera TXID longo.
+
+> **Analogia:** o QR estático é uma URL de página; o dinâmico é uma URL com token de sessão. O primeiro identifica *para quem* pagar; o segundo identifica *qual cobrança* está sendo paga. Conciliar em cima do estático é o mesmo problema de rastrear conversão sem parâmetro de campanha.
 
 ### Pix Automático (2025/2026)
 
 Novidade regulatória recente: o **Pix Automático** é o equivalente ao débito automático, mas multibancos e padronizado pelo Bacen — o cliente autoriza uma vez, via Open Finance, e cobranças recorrentes fluem sem convênio bilateral entre empresa e banco.
 
+### Checkpoint
+
+1. Onde o PIX liquida, e por que não é em Reservas Bancárias?
+2. O que acontece com a Conta PI de um participante às 3h de um domingo, se ela zerar?
+3. Qual a diferença entre portabilidade e reivindicação de posse de uma chave?
+4. Devolver um PIX é alterar a transação original?
+5. Por que conciliar pagamentos de um QR estático é mais difícil que de um dinâmico?
+6. Um participante indireto do SPI tem Conta PI?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Em Conta PI, uma conta dedicada de cada participante direto no Bacen, pré-financiada a partir de Reservas via STR. O SPI roda 24/7 e o STR não, então o PIX precisa de uma conta que funcione fora do horário bancário. (2) As transações falham por falta de liquidez — não existe "fatura depois". Daí a necessidade de provisionar caixa para madrugada e fim de semana, e a linha de redesconto do SPI. (3) Na portabilidade a chave já é sua e você a leva para outro PSP; na reivindicação de posse você alega ser o dono de uma chave cadastrada por terceiro. Os prazos e o efeito do silêncio do titular atual são diferentes. (4) Não — é uma transação nova (`pacs.004`), com identidade própria, que referencia a original e carrega um motivo tipado. Pode inclusive ser parcial e repetida. (5) Porque o estático é reutilizável e não carrega TXID por cobrança: várias pessoas pagam o mesmo código, e casar pagamento com cobrança vira heurística de valor e horário. (6) Não — só o participante direto tem. O indireto liquida através de um direto, e é contra esse direto que você concilia.
+
+</details>
+
 ---
 
 ## 11. TED, boleto e CNAB
 
-### TED (Transferência Eletrônica Disponível)
+### 11.1 TED
 
-Nasceu na reforma do SPB de 2002 para permitir liquidação no mesmo dia, em contraste com o DOC (que levava um dia útil). Tecnicamente, a ordem de TED trafega das instituições até a liquidação final no STR, dentro do horário de funcionamento dele.
+Nasceu na reforma do SPB de 2002 para permitir liquidação no mesmo dia, em contraste com o DOC (que levava um dia útil). A ordem de TED percorre um dos dois caminhos descritos no capítulo 9 — pelo SITRAF da Núclea, dentro do horário da câmara, ou diretamente ao STR — e termina, nos dois casos, numa liquidação definitiva entre contas de Reservas Bancárias.
 
 **O DOC e a TEC** (Transferência Especial de Crédito, usada por empresas para pagamento de benefícios) **foram descontinuados como produtos de varejo em 2024** por decisão da Febraban: 15 de janeiro foi o último dia de emissão e agendamento, e 29 de fevereiro o encerramento definitivo. Restaram apenas usos residuais entre instituições financeiras. Na prática, se você encontrar suporte a DOC num fluxo de cliente em sistema legado, é código morto.
 
 **A TED não foi extinta** e não há previsão nesse sentido — segue ativa e é o trilho preferencial para grandes valores, ainda que amplamente ofuscada pelo PIX no varejo.
 
-### Boleto bancário + CNAB: o fluxo que você provavelmente já mexeu
+### 11.2 O boleto bancário
 
-O **CNAB** (padrão Febraban, "Centro Nacional de Automação Bancária") é o formato de arquivo de texto posicional usado para troca em lote entre empresa e banco: **remessa** (empresa → banco, ex.: registrar título) e **retorno** (banco → empresa, ex.: baixa de liquidação, rejeição).
-
-Duas variantes convivem, e o número no nome é simplesmente **o tamanho de cada registro (linha) em caracteres**:
-
-| | **CNAB 240** | **CNAB 400** |
-|---|---|---|
-| Tamanho do registro | 240 posições | 400 posições |
-| Estrutura | Hierárquica: header de arquivo → header de lote → detalhes (**segmentos** P, Q, R… — cada segmento é um tipo de registro que carrega um conjunto específico de campos: P traz dados do título, Q traz dados do sacado, e assim por diante) → trailer de lote → trailer de arquivo | Plana: header → detalhes → trailer |
-| Multiproduto | Sim, vários lotes/produtos no mesmo arquivo | Não, um produto por arquivo |
-| Status | Padrão mais moderno | Legado, ainda muito usado em cobrança |
-
-**Cuidado com a expectativa de portabilidade:** apesar de "padrão Febraban", cada banco publica seu próprio manual, com particularidades de campos e códigos de ocorrência.
-
-> **Analogia:** é o "SQL padrão". Existe uma norma, todo mundo diz seguir, e mesmo assim seu código quebra ao trocar de banco de dados. CNAB é igual: uma família de dialetos, não um formato único. Parser sem configuração por instituição não sobrevive ao segundo banco.
-
-Dois termos do dia a dia de boleto: a **linha digitável** é a sequência numérica impressa que o pagador pode digitar manualmente, e o **código de barras** é a mesma informação em forma legível por leitor óptico. Ambos codificam banco, moeda, valor, vencimento e o identificador do título — ou seja, o boleto carrega os próprios dados, e o banco confere se batem com o registro.
+O boleto é uma ordem de cobrança que o **cedente** (quem tem a receber) emite contra o **sacado** — o termo do jargão bancário para **o devedor do título, quem vai pagar**. Você vai encontrar "sacado" e "pagador" usados como sinônimos: o primeiro é o vocabulário do título de crédito, o segundo é o do arranjo de pagamento.
 
 Desde as regras mais recentes do SFN, **todo boleto precisa ser registrado numa base centralizada operada pela Núclea** antes de ser apresentado ao pagador — isso elimina fraudes de boleto "não registrado" e permite pagamento em qualquer banco, não só no emissor.
+
+> **Fio condutor — a Padaria do João.** Para receber os R$ 10.000 do Mercado da Esquina, a padaria emite um boleto com vencimento em 30 dias. Ela é o **cedente**; o Mercado é o **sacado**. O banco que registra o título é apenas o intermediário — e qual papel exatamente ele exerce depende da carteira, que é o assunto da seção 11.5.
 
 ```mermaid
 sequenceDiagram
@@ -1007,9 +1372,154 @@ sequenceDiagram
     ERP->>ERP: Concilia e marca título como pago
 ```
 
-**Nota prática:** compensação e liquidação são etapas **distintas** — a compensação confirma que o pagamento ocorreu e dispara a comunicação entre bancos; a liquidação é o momento em que o valor de fato muda de mãos entre as instituições no STR. Prazos recentes de mercado vêm migrando de D+1 para modelos D+0 em parte do fluxo, o que impacta diretamente sua régua de conciliação e baixa automática.
+**Nota prática:** compensação e liquidação são etapas **distintas** — a compensação confirma que o pagamento ocorreu e dispara a comunicação entre bancos; a liquidação é o momento em que o valor de fato muda de mãos entre as instituições no STR. Prazos recentes de mercado vêm migrando de D+1 para modelos D+0 em parte do fluxo, o que impacta diretamente sua **régua de cobrança** — a sequência escalonada de ações por faixa de atraso, detalhada na seção 13.1 — e a baixa automática.
 
-### Carteiras de cobrança: simples, caucionada e descontada
+#### DDA
+
+O **DDA (Débito Direto Autorizado)** é o serviço que entrega o boleto eletronicamente ao pagador, dentro do app do banco dele, dispensando o envio do documento impresso ou em PDF. Para quem emite, muda pouco no fluxo de registro — mas muda a expectativa do cliente, que passa a ver a cobrança aparecer sozinha, e reduz o espaço para fraude de boleto adulterado enviado por e-mail.
+
+---
+
+### 11.3 Código de barras e linha digitável
+
+Um boleto **carrega os próprios dados**. O banco pagador não precisa consultar ninguém para saber quanto cobrar e para quem mandar: está tudo nos 44 dígitos do código de barras. Isso é elegante e é também a razão de existirem tantos dígitos verificadores — sem consulta, o único jeito de detectar erro de digitação é redundância embutida.
+
+São dois objetos, com a mesma informação em formatos diferentes:
+
+- **Código de barras** — 44 dígitos, lidos por leitor óptico. É a forma canônica.
+- **Linha digitável** — 47 dígitos, para o humano digitar. É uma **reorganização** do código de barras, com três dígitos verificadores extras.
+
+#### A anatomia dos 44 dígitos
+
+```
+ 341 9 5 1000 0000012345 1234567890123456789012345
+  │  │ │  │       │                  │
+  │  │ │  │       │                  └── 20-44: campo livre (25)
+  │  │ │  │       │                       definido por CADA banco
+  │  │ │  │       └───────────────────── 10-19: valor (10, 2 decimais implícitas)
+  │  │ │  └───────────────────────────── 06-09: fator de vencimento (4)
+  │  │ └──────────────────────────────── 05: DV geral (módulo 11)
+  │  └────────────────────────────────── 04: moeda (9 = real)
+  └───────────────────────────────────── 01-03: banco (código COMPE)
+```
+
+O **campo livre** de 25 posições é onde mora quase toda a dor: cada banco define seu próprio conteúdo ali — agência, conta, carteira, nosso número, com ordens e tamanhos diferentes. As posições 1 a 19 são padrão nacional; da 20 em diante é dialeto.
+
+#### Da barra para a linha: a reorganização
+
+A linha digitável não acrescenta informação. Ela **embaralha** o código de barras em cinco campos, cada um curto o bastante para o olho humano não se perder:
+
+| Campo | Conteúdo | Vem de | DV |
+|---|---|---|---|
+| 1 | banco + moeda + campo livre `[1..5]` | barras 1-4 e 20-24 | módulo 10 |
+| 2 | campo livre `[6..15]` | barras 25-34 | módulo 10 |
+| 3 | campo livre `[16..25]` | barras 35-44 | módulo 10 |
+| 4 | DV geral do código de barras | barra 5 | — |
+| 5 | fator de vencimento + valor | barras 6-19 | — |
+
+Repare na inversão: o DV geral, que na barra fica na quinta posição, na linha digitável vai para o **quarto campo**, sozinho. E o fator e o valor, que na barra vêm antes do campo livre, na linha vão para o **fim**. Um parser que assume a mesma ordem nos dois formatos produz um número válido e completamente errado.
+
+#### Os dois dígitos verificadores
+
+**Módulo 10** — usado nos campos 1, 2 e 3 da linha digitável. Da direita para a esquerda, multiplique alternadamente por 2 e 1; se o produto passar de 9, some seus algarismos; some tudo; o DV é o que falta para o próximo múltiplo de 10 (e 10 vira 0).
+
+**Módulo 11** — usado no DV geral do código de barras. Sobre os 43 dígitos (os 44 sem a posição 5), da direita para a esquerda, aplique pesos ciclando de 2 a 9; some; `DV = 11 − (soma mod 11)`; e a regra que todo mundo esquece: **se o resultado for 0, 10 ou 11, o DV é 1.**
+
+```python
+def dv_modulo10(campo: str) -> int:
+    soma = 0
+    for i, ch in enumerate(reversed(campo)):
+        p = int(ch) * (2 if i % 2 == 0 else 1)
+        soma += p - 9 if p > 9 else p
+    return (10 - soma % 10) % 10
+
+
+def dv_geral_modulo11(barra43: str) -> int:
+    pesos = [2, 3, 4, 5, 6, 7, 8, 9]
+    soma = sum(int(ch) * pesos[i % 8]
+               for i, ch in enumerate(reversed(barra43)))
+    dv = 11 - soma % 11
+    return 1 if dv in (0, 10, 11) else dv
+```
+
+#### O fator de vencimento e o rollover que quebrou sistemas
+
+O vencimento não vai no boleto como data. Vai como **número de dias decorridos desde 07/10/1997** — quatro dígitos, e só. O fator `1000` é `03/07/2000`.
+
+Quatro dígitos acabam. O fator `9999` caiu em **21/02/2025**, e a partir de `22/02/2025` a numeração **voltou para `1000`**, por definição da Febraban.
+
+E aqui está o problema, que é bonito de tão didático: um sistema que calcula o fator como `(vencimento − 07/10/1997).days` funcionou perfeitamente por 25 anos e passou a produzir número errado da noite para o dia. Boletos com vencimento posterior ao rollover saem com fator absurdo — ou com fator que aponta para uma data 27 anos no passado, dependendo de onde o overflow acontece.
+
+A implementação correta trata o fator como **contador circular com base móvel**, não como diferença absoluta de datas:
+
+```python
+from datetime import date
+
+BASE_ORIGINAL = date(1997, 10, 7)
+ROLLOVER = date(2025, 2, 22)   # quando o fator voltou a 1000
+
+
+def fator_vencimento(vencimento: date) -> int:
+    if vencimento < ROLLOVER:
+        return (vencimento - BASE_ORIGINAL).days
+    return 1000 + (vencimento - ROLLOVER).days
+```
+
+Duas consequências práticas que valem mais que o código:
+
+- **Quem lê o fator tem o mesmo problema.** Converter fator em data exige saber de qual ciclo ele veio. Se você processa boletos com vencimento antigo e novo na mesma base, precisa de uma regra de desambiguação — normalmente a janela de emissão do título.
+- **Boleto sem vencimento existe.** Fator `0000` significa "sem data de vencimento". Seu parser não pode dividir por zero nem estourar ao encontrá-lo.
+
+> **Analogia:** é o bug do ano 2000 em miniatura, com a diferença de que este já aconteceu e ninguém fez força-tarefa nacional. Todo campo de tamanho fixo que conta alguma coisa vai transbordar — a única pergunta é se você vai estar no plantão naquele dia.
+
+#### O que validar, e em que ordem
+
+Ao receber um código de barras ou uma linha digitável de fora do seu sistema, valide **antes de qualquer regra de negócio**:
+
+1. **Tamanho** — 44 ou 47 dígitos, só dígitos. Boleto de concessionária e tributo tem regra própria e começa com `8`.
+2. **DVs dos campos** (linha digitável, módulo 10) e **DV geral** (módulo 11). Um DV errado é erro de digitação; recusar já aqui evita uma consulta inútil.
+3. **Coerência entre linha e barra**, quando você recebe as duas. Elas têm de ser conversíveis uma na outra.
+4. **Valor e vencimento** contra o que o registro central diz. O boleto carrega os dados, mas o registro é a verdade — divergência é sinal de adulteração.
+
+---
+
+### 11.4 CNAB: o formato de arquivo
+
+O **CNAB** — sigla de "Centro Nacional de Automação Bancária", área da **Febraban** (Federação Brasileira de Bancos, a associação do setor que padroniza leiautes e convenções interbancárias) — é o formato de arquivo de texto posicional usado para troca em lote entre empresa e banco: **remessa** (empresa → banco, ex.: registrar título) e **retorno** (banco → empresa, ex.: baixa de liquidação, rejeição).
+
+Duas variantes convivem, e o número no nome é simplesmente **o tamanho de cada registro (linha) em caracteres**:
+
+| | **CNAB 240** | **CNAB 400** |
+|---|---|---|
+| Tamanho do registro | 240 posições | 400 posições |
+| Estrutura | Hierárquica: header de arquivo → header de lote → detalhes (**segmentos**, cada um um tipo de registro com um conjunto próprio de campos) → trailer de lote → trailer de arquivo | Plana: header → detalhes → trailer |
+| Multiproduto | Sim, vários lotes/produtos no mesmo arquivo | Não, um produto por arquivo |
+| Status | Padrão mais moderno | Legado, ainda muito usado em cobrança |
+
+**Cuidado com a expectativa de portabilidade:** apesar de "padrão Febraban", cada banco publica seu próprio manual, com particularidades de campos e códigos de ocorrência.
+
+> **Analogia:** é o "SQL padrão". Existe uma norma, todo mundo diz seguir, e mesmo assim seu código quebra ao trocar de banco de dados. CNAB é igual: uma família de dialetos, não um formato único. Parser sem configuração por instituição não sobrevive ao segundo banco.
+
+**Dois campos de header que ninguém explica e todo mundo apanha:**
+
+- **Convênio** — o código que identifica o **contrato entre a empresa e o banco** para aquele produto. Uma mesma empresa pode ter convênios distintos para cobrança e para pagamento, ou um por filial. Ele vai no header de arquivo ou de lote (a posição varia por banco e por produto) e é validado na entrada: convênio errado derruba o arquivo inteiro, normalmente com uma mensagem genérica.
+- **NSA (Número Sequencial de Arquivo)** — o contador de arquivos trocados naquele convênio. Precisa ser **único e crescente**; repetição costuma ser rejeitada e furo na sequência costuma gerar alerta. A seção 11.8 mostra por que ele tem de ser incrementado dentro da transação de geração.
+
+#### O vocabulário operacional: instruções e ocorrências
+
+Três termos que aparecem em todo manual de banco:
+
+- **Espécie do título** — o que originou a cobrança: DM (duplicata mercantil), DS (duplicata de serviço), NP (nota promissória), entre outras. Vai em campo próprio do registro e tem efeito jurídico, sobretudo na hora de protestar. No 240 o campo é numérico e o domínio varia por banco.
+- **Instrução** — o comando que o cedente envia na **remessa** para o banco agir sobre um título já registrado: pedir baixa, mandar protestar, sustar protesto, conceder abatimento, alterar vencimento, prorrogar prazo.
+- **Código de ocorrência** — o que o banco responde no **retorno**: entrada confirmada, entrada rejeitada, liquidação, baixa, alteração aceita, título encaminhado a cartório. Cada código carrega ainda um **motivo**, que é o campo que de fato explica por que algo foi recusado.
+
+> **Analogia:** remessa e retorno formam um protocolo assíncrono de comando e resposta, correlacionado por identificador de título — parecido com uma fila de comandos e um tópico de eventos de resultado. A diferença é que o *round-trip* leva horas, não milissegundos, e a ordem de chegada não é garantida. Por isso o processamento do retorno precisa ser idempotente e tolerante a eventos fora de ordem.
+
+O ponto de atenção prático: **a rejeição costuma ser silenciosa para o negócio**. O título "foi enviado", o arquivo "foi aceito", mas um registro individual pode ter sido recusado. Sem tratamento explícito dos códigos de rejeição, a empresa acredita estar cobrando um título que o banco nunca registrou.
+
+---
+
+### 11.5 Carteiras de cobrança
 
 Aqui está um vocabulário que aparece como **campo obrigatório** em todo layout CNAB e que raramente é explicado: a **carteira de cobrança**.
 
@@ -1032,6 +1542,8 @@ Aqui os títulos deixam de ser apenas objeto de cobrança e passam a **sustentar
 **Caucionada** — os títulos são dados em **garantia** (caução) de uma linha de crédito. O banco não vira dono deles; ele os mantém em custódia como lastro. Conforme os sacados pagam, o valor amortiza a dívida do cedente, ou a garantia é substituída por novos títulos, conforme o contrato.
 
 **Descontada** — o cedente **endossa** os títulos ao banco, que antecipa o valor de face com **deságio** e passa a ser o credor. É a operação de desconto clássica.
+
+> **Endosso** é a transferência da titularidade de um título de crédito para outra pessoa, feita por declaração no próprio título (ou, no mundo escritural, por registro na entidade competente). Quem endossa é o **endossante**; quem recebe é o **endossatário**. É o mecanismo jurídico que permite a um recebível circular — e é o que diferencia um título de crédito de um simples contrato bilateral.
 
 > **Ponto que causa muito mal-entendido:** mesmo na descontada, o cedente normalmente **continua responsável** se o sacado não pagar — é a chamada coobrigação, ou direito de regresso. O banco cobra de volta. Ou seja, o risco não some com a antecipação; ele apenas fica adormecido até o vencimento.
 
@@ -1060,6 +1572,7 @@ Antigamente existia a **cobrança sem registro**, em que o banco só tomava conh
 
 ```mermaid
 graph TD
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
     T["Título a receber<br/>(duplicata, prestação de serviço)"] --> Q{"Qual carteira?"}
 
     Q -->|Simples| S["Banco cobra e repassa<br/>Cedente continua dono<br/>Sem adiantamento"]
@@ -1073,46 +1586,183 @@ graph TD
     P2 -.->|"Se o sacado não pagar"| R["Cedente responde<br/>(coobrigação / regresso)"]
     P3 -.->|"Se o sacado não pagar"| R
 
-    style Q fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    class Q destaque
 ```
 
-#### O vocabulário operacional: instruções e ocorrências
+---
 
-Fechando o ciclo do CNAB, três termos que aparecem em todo manual de banco:
+### 11.6 CNAB de cobrança em detalhe
 
-- **Espécie do título** — o que originou a cobrança: DM (duplicata mercantil), DS (duplicata de serviço), NP (nota promissória), entre outras. Vai em campo próprio do registro e tem efeito jurídico, sobretudo na hora de protestar.
-- **Instrução** — o comando que o cedente envia na **remessa** para o banco agir sobre um título já registrado: pedir baixa, mandar protestar, sustar protesto, conceder abatimento, alterar vencimento, prorrogar prazo.
-- **Código de ocorrência** — o que o banco responde no **retorno**: entrada confirmada, entrada rejeitada, liquidação, baixa, alteração aceita, título encaminhado a cartório. Cada código carrega ainda um **motivo**, que é o campo que de fato explica por que algo foi recusado.
+A seção 11.4 apresentou o formato; esta abre o produto que a maioria das empresas encontra primeiro. O recorte é o **CNAB 240 de cobrança** — o mesmo esqueleto hierárquico da seção 11.7, com segmentos e domínios próprios.
 
-> **Analogia:** remessa e retorno formam um protocolo assíncrono de comando e resposta, correlacionado por identificador de título — parecido com uma fila de comandos e um tópico de eventos de resultado. A diferença é que o *round-trip* leva horas, não milissegundos, e a ordem de chegada não é garantida. Por isso o processamento do retorno precisa ser idempotente e tolerante a eventos fora de ordem.
+> **Sobre as posições citadas aqui e na seção 11.7:** os intervalos seguem o leiaute de referência da Febraban. Vale o de sempre — cada banco publica seu próprio manual e o manual do banco prevalece. Use as posições daqui para entender a *forma* do registro, nunca como fonte para implementar contra uma instituição específica.
 
-O ponto de atenção prático: **a rejeição costuma ser silenciosa para o negócio**. O título "foi enviado", o arquivo "foi aceito", mas um registro individual pode ter sido recusado. Sem tratamento explícito dos códigos de rejeição, a empresa acredita estar cobrando um título que o banco nunca registrou.
+#### A assimetria remessa × retorno
 
-#### DDA
+O primeiro fato que desorganiza quem chega: **remessa e retorno não usam os mesmos segmentos.**
 
-O **DDA (Débito Direto Autorizado)** é o serviço que entrega o boleto eletronicamente ao pagador, dentro do app do banco dele, dispensando o envio do documento impresso ou em PDF. Para quem emite, muda pouco no fluxo de registro — mas muda a expectativa do cliente, que passa a ver a cobrança aparecer sozinha, e reduz o espaço para fraude de boleto adulterado enviado por e-mail.
+| Direção | Segmentos | O que carregam |
+|---|---|---|
+| **Remessa** (empresa → banco) | **P, Q, R, S** | O título que se quer registrar, ou a instrução sobre um título já registrado |
+| **Retorno** (banco → empresa) | **T, U** | O que aconteceu com o título, e com quais valores |
 
-### CNAB x APIs modernas (Web Services bancários)
+Isso significa que o parser de remessa e o de retorno são programas diferentes, com domínios diferentes. Quem escreve um esperando reaproveitar tudo no outro descobre isso tarde.
 
-O mercado está migrando de **arquivo em lote (CNAB)** para **APIs em tempo real**.
+#### Os segmentos de remessa
 
-O motivo principal é regulatório: regras como o ***split payment*** da Reforma Tributária — em que o tributo é separado e recolhido automaticamente no instante do pagamento, em vez de ser apurado pelo vendedor depois — exigem confirmação imediata. Um ciclo de remessa e retorno com corte diário simplesmente não entrega isso.
+**Segmento P — o título.** É o registro obrigatório e principal. Campos-chave:
 
-> **Analogia:** é a migração de *batch* noturno para evento em streaming. O arquivo continua existindo por inércia e por volume, mas tudo que exige resposta síncrona vai vazando para a API.
+| Posições | Campo | Por que importa |
+|---|---|---|
+| 14 | Código do segmento (`P`) | Despacho do parser |
+| **16-17** | **Código de movimento** | *O* campo desta seção. Ver a tabela adiante |
+| 38-57 | **Nosso número** | O identificador do título **no banco**. 20 posições, formato definido pela instituição |
+| 58 | Código da carteira | Ver seção 11.5 — o código varia por banco |
+| 63-77 | **Número do documento** | O "seu número": o identificador do título **na sua empresa** |
+| 78-85 | Data de vencimento | `DDMMAAAA` |
+| 86-100 | Valor nominal | 15 posições, 2 decimais implícitas |
+| 106-107 | Espécie do título | DM, DS, NP… em domínio numérico |
+| 108 | Identificação de aceite | `A` com aceite, `N` sem |
+| 109-116 | Data de emissão | |
+| 117-140 | Juros de mora | Código, data de início e valor/taxa |
+| 141-164 | Desconto 1 | Código, data-limite e valor/percentual |
+| 180-194 | Valor do abatimento | |
+| 220 | **Código para protesto** | `1` protestar em dias corridos, `2` em dias úteis, `3` não protestar |
+| 221-222 | Dias para protesto | Contados do vencimento |
+| 223-227 | Código e prazo para baixa/devolução | O título se baixa sozinho depois de N dias |
 
-O CNAB não vai desaparecer no curto prazo. Mas isso explica por que os bancos vêm expondo APIs REST paralelas ao mesmo fluxo que antes só existia via arquivo.
+**Os dois "números" são a confusão mais cara do produto**, e ela tem exatamente a mesma forma do problema de correlação da seção 11.7:
+
+- **Nosso número** é do banco. Só existe depois do registro, e é por ele que o banco identifica o título.
+- **Número do documento** (seu número) é seu. Existe desde antes do registro, e é por ele que **você** identifica o título.
+
+Correlacione pelo seu número. Se o seu sistema depende do nosso número para casar o retorno, ele não consegue tratar o caso em que o registro foi rejeitado — porque aí não existe nosso número nenhum.
+
+**Segmento Q — o sacado.** Tipo e número de inscrição (CPF/CNPJ), nome, endereço completo, CEP, cidade e UF, mais os dados do **sacador avalista** quando houver. Obrigatório junto do P: o par P+Q é atômico, do mesmo jeito que o par A+B da seção 11.7.
+
+**Segmento R — o que não coube no P.** Desconto 2 e 3, e — este é o pega — **a multa**. Código da multa, data de início e valor ou percentual moram no R, não no P. Sistema que preenche juros no P e esquece o R emite título sem multa por atraso, e a divergência só aparece na primeira liquidação em atraso. Carrega também mensagens livres e o e-mail do sacado para envio de aviso.
+
+**Segmento S — o que se imprime.** Mensagens destinadas ao corpo do boleto, com opções de posicionamento. Opcional e frequentemente ignorado.
+
+#### Códigos de movimento: a remessa é um comando
+
+As posições 16-17 do segmento P transformam o mesmo registro em coisas completamente diferentes. Este é o campo que faz do CNAB de cobrança um protocolo de comandos, não um formato de exportação:
+
+| Código | Movimento | O que o banco faz |
+|---|---|---|
+| `01` | Entrada de título | Registra o título. É o único que cria algo |
+| `02` | Pedido de baixa | Tira o título de cobrança |
+| `04` / `05` | Concessão / cancelamento de abatimento | |
+| `06` | Alteração de vencimento | Prorrogação |
+| `07` / `08` | Concessão / cancelamento de desconto | |
+| `09` | **Protestar** | Encaminha a cartório após o prazo |
+| `10` | Sustar protesto e **baixar** o título | |
+| `11` | Sustar protesto e **manter** em carteira | Diferente do `10`: o título continua vivo |
+| `12` | Alteração de juros de mora | |
+| `31` | Alteração de outros dados | O curinga, e o mais dependente de manual |
+
+**A diferença entre `10` e `11` é a que mais gera atrito com o cliente.** Sustar o protesto porque o sacado negociou não é a mesma coisa que desistir da cobrança. Se o sistema mapeia os dois para "cancelar protesto" e escolhe um por padrão, metade dos casos vira título baixado indevidamente — ou título vivo que o financeiro achava encerrado.
+
+#### Os segmentos de retorno
+
+**Segmento T — o que aconteceu.** Traz nosso número, número do documento, vencimento, valor nominal, o **código de movimento de retorno** (posições 16-17) e, nas posições **214-223**, dez posições que comportam **até cinco motivos de dois caracteres** — exatamente a mesma armadilha das posições 231-240 dos segmentos A e J na seção 11.7. Ler só os dois primeiros caracteres descarta motivos e explica ao cliente uma rejeição pela metade.
+
+**Segmento U — com quais valores.** Vem sempre logo depois do T e é onde estão os números que a contabilidade precisa:
+
+| Posições | Campo |
+|---|---|
+| 18-32 | Juros, multa e encargos |
+| 33-47 | Valor do desconto concedido |
+| 48-62 | Valor do abatimento |
+| 63-77 | Valor do IOF |
+| **78-92** | **Valor pago pelo sacado** |
+| **93-107** | **Valor líquido creditado ao cedente** |
+| 108-122 | Outras despesas (tarifas, custas de cartório) |
+| 138-145 | Data da ocorrência |
+| 146-153 | **Data da efetivação do crédito** |
+
+**Valor pago ≠ valor líquido ≠ valor nominal.** São três números diferentes, e a diferença entre eles é tarifa, juros, multa e desconto. Um sistema que baixa o título pelo valor nominal e credita pelo valor pago não fecha com o extrato — a tarifa some no meio. É o mesmo erro do "valor solicitado × valor efetivado" da seção 11.7, visto do outro lado do balcão.
+
+E, como no pagamento, **a data da ocorrência não é a data do crédito**. O sacado pagou na segunda; o dinheiro entra na conta do cedente na terça. Conciliação que usa a data errada gera divergência todo dia.
+
+#### Códigos de movimento de retorno
+
+| Código | Significado | Efeito no título |
+|---|---|---|
+| `02` | Entrada confirmada | Registrado. Agora existe |
+| `03` | **Entrada rejeitada** | Não existe. Ver os motivos em 214-223 |
+| `06` | **Liquidação** | Pago |
+| `09` | Baixa | Encerrado sem pagamento |
+| `11` | Títulos em ser | Posição de carteira, não é evento |
+| `14` | Confirmação de alteração de vencimento | |
+| `17` | **Liquidação após baixa** | Pagaram um título que você já tinha encerrado |
+| `19` / `20` | Confirmação de instrução de protesto / de sustação | O comando foi aceito, ainda não executado |
+| `23` | Remessa a cartório | O protesto está em curso |
+| `25` | Protestado e baixado | |
+| `26` | Instrução rejeitada | O comando foi recusado |
+| `28` | Débito de tarifas e custas | Cobrança do banco, não do sacado |
+
+O código `17` merece atenção especial: **ele quebra a suposição de que baixado é estado terminal.** Um título baixado por decurso de prazo pode ser pago depois, e o dinheiro entra. Se o modelo não previu esse caminho, o crédito chega sem título para casar e vira conta transitória que ninguém sabe conciliar — a mesma lição de "pago nunca é terminal" do capítulo 15, na direção contrária.
+
+#### O ciclo de vida do título
+
+```mermaid
+stateDiagram-v2
+    [*] --> Enviado: remessa com movimento 01
+    Enviado --> Rejeitado: retorno 03
+    Enviado --> Registrado: retorno 02
+
+    Registrado --> Liquidado: retorno 06
+    Registrado --> Baixado: retorno 09 (instrução ou decurso)
+    Registrado --> EmCartorio: retorno 23
+
+    EmCartorio --> Protestado: retorno 25
+    EmCartorio --> Registrado: sustação (movimento 11)
+    Protestado --> Liquidado: pagamento em cartório
+    Baixado --> Liquidado: retorno 17
+
+    Rejeitado --> [*]
+    Liquidado --> [*]
+    Baixado --> [*]
+    Protestado --> [*]
+```
+
+Três leituras do diagrama que valem mais que ele:
+
+1. **Só existe uma entrada.** Todo título nasce de um movimento `01`, e até o retorno `02` chegar ele não existe para o banco. Emitir o boleto para o cliente antes da confirmação de entrada é apostar que nada foi rejeitado.
+2. **Baixado não é terminal de verdade.** A aresta `Baixado --> Liquidado` é o retorno `17`, e ela existe na vida real com frequência incômoda.
+3. **Sustação volta ao registro, não à baixa.** É o movimento `11`; o `10` levaria a `Baixado`. Modelar os dois como a mesma transição é o bug descrito acima.
+
+> **Fio condutor — a Padaria do João.** O boleto de R$ 10.000 vai na remessa como um segmento P com movimento `01`, espécie DM (é uma duplicata mercantil), vencimento em 30 dias, mais o segmento Q com o CNPJ do Mercado da Esquina, mais um segmento R com a multa de 2% e os juros de 1% ao mês. No dia seguinte chega o retorno com movimento `02`: o título existe. Trinta dias depois, o Mercado paga com três dias de atraso — e o retorno traz movimento `06` no segmento T e, no U, valor nominal R$ 10.000,00, juros e multa somados de R$ 210,00, tarifa de R$ 3,50 e valor líquido creditado de R$ 10.206,50. Três números diferentes, e a contabilidade da padaria precisa dos três.
+
+#### Checkpoint — cobrança
+
+1. Numa TED entre dois bancos, o dinheiro do cliente passa pela conta de Reservas?
+2. Quantos dígitos tem o código de barras e quantos a linha digitável? Por que a diferença?
+3. O que é o fator de vencimento e por que ele quebrou sistemas em fevereiro de 2025?
+4. Na cobrança descontada, quem assume o calote do sacado?
+5. Qual a diferença entre "nosso número" e "número do documento", e por qual dos dois se correlaciona remessa e retorno?
+6. Onde fica a multa do boleto no CNAB 240: segmento P ou R?
+7. Um título com movimento de retorno `09` está encerrado?
+8. Qual a diferença prática entre os movimentos de remessa `10` e `11`?
+9. No segmento U, por que existem três campos de valor diferentes?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Não. São duas camadas contábeis paralelas: o banco debita o cliente no ledger dele, e separadamente o STR move as reservas entre os dois bancos. (2) 44 e 47. A linha digitável reorganiza os mesmos dados em cinco campos e acrescenta três dígitos verificadores de módulo 10, um por campo, para detectar erro de digitação. (3) É o número de dias desde 07/10/1997, em quatro posições. Chegou a 9999 em 21/02/2025 e voltou a 1000 no dia seguinte, então quem calculava a diferença absoluta desde 1997 passou a gerar fator errado. (4) O cedente, por coobrigação — o risco não some com a antecipação. (5) Nosso número é o identificador do título no banco e só existe após o registro; número do documento é o seu, e existe desde antes. Correlacione pelo seu, porque ele também existe quando o registro é rejeitado. (6) No R. Juros e desconto 1 ficam no P; multa e descontos 2 e 3 ficam no R. (7) Não necessariamente: o movimento `17` (liquidação após baixa) permite que um título baixado seja pago depois. (8) `10` susta o protesto **e baixa** o título; `11` susta **e mantém** o título em carteira. Confundir os dois encerra cobranças que deveriam seguir vivas. (9) Porque valor nominal, valor pago pelo sacado e valor líquido creditado são grandezas distintas — entre elas estão juros, multa, desconto, abatimento e tarifas.
+
+</details>
 
 ---
 
-## 11-A. CNAB 240 de pagamento: segmentos, estados e ocorrências
+### 11.7 CNAB de pagamento em detalhe
 
-A seção anterior apresentou o CNAB pelo lado da **cobrança** — segmentos P, Q, R, título registrado, baixa por liquidação. O mesmo formato carrega um segundo produto, com regras próprias e um perfil de risco bem diferente: o **pagamento**. É o assunto desta seção.
-
-> **Sobre as posições citadas:** os intervalos deste texto seguem o leiaute de referência da Febraban. Vale o de sempre — cada banco publica seu próprio manual e o manual do banco prevalece. Use as posições daqui para entender a *forma* do registro, nunca como fonte para implementar contra uma instituição específica.
+A seção anterior tratou do CNAB pelo lado da **cobrança** — segmentos P, Q, R, S na remessa, T e U no retorno, título registrado, baixa por liquidação. O mesmo formato carrega um segundo produto, com regras próprias e um perfil de risco bem diferente: o **pagamento**. É o assunto desta seção.
 
 ---
 
-### 11-A.1 A virada de sentido
+#### 11.7.1 A virada de sentido
 
 Em cobrança, você **emite um título e espera receber**. A remessa é um pedido de registro, e o pior caso de um erro costuma ser retrabalho: o título não registra, você corrige e reenvia.
 
@@ -1127,13 +1777,15 @@ Em pagamento, você **manda o dinheiro sair**. A remessa é uma ordem de débito
 | Reversão | Baixa, cancelamento, novo título | Depende da boa vontade de quem recebeu |
 | Segmentos do detalhe | P, Q, R | A, B, C, J, N, O, Z |
 
-Essa assimetria explica praticamente todas as regras "chatas" que aparecem no produto: alçada e pré-aprovação antes do envio, bloqueio de saldo, idempotência levada a sério, e um ciclo de estados bem mais longo que o de cobrança.
+Essa assimetria explica praticamente todas as regras "chatas" que aparecem no produto: **alçada** e pré-aprovação antes do envio, bloqueio de saldo, idempotência levada a sério, e um ciclo de estados bem mais longo que o de cobrança.
+
+> **Alçada** é o limite de valor até o qual uma pessoa ou um papel pode aprovar sozinho uma operação. Acima dele, exige-se aprovação de outro nível, ou de duas pessoas. É o equivalente organizacional de um *code review* obrigatório acima de certo raio de impacto — e, como ele, vale por faixa de valor, por tipo de operação e por perfil, não por um número único.
 
 > **Analogia:** cobrança é um `INSERT` que você pode repetir sem grande estrago, porque a chave natural te protege. Pagamento é um `DELETE` sem transação aberta: rodou, saiu, e o `ROLLBACK` depende de um sistema que não é seu.
 
 ---
 
-### 11-A.2 Nível 1 — a anatomia do arquivo
+#### 11.7.2 Nível 1 — a anatomia do arquivo
 
 O 240 é hierárquico. Cinco tipos de registro montam a estrutura, e o tipo fica na **posição 8** de toda linha:
 
@@ -1161,7 +1813,7 @@ Quase toda dúvida de "por que isso está em lotes separados?" se resolve com es
 
 ---
 
-### 11-A.3 Tipo de serviço e forma de lançamento
+#### 11.7.3 Tipo de serviço e forma de lançamento
 
 Ambos ficam no **header de lote** (registro 1) e são os dois campos que mais determinam o comportamento do arquivo.
 
@@ -1190,15 +1842,17 @@ Ambos ficam no **header de lote** (registro 1) e são os dois campos que mais de
 | `11` | Contas e tributos com código de barras | O |
 | `16` / `17` / `18` | DARF Normal / GPS / DARF Simples | N |
 
+As três siglas de guia que aparecem aqui e adiante: **DARF** (Documento de Arrecadação de Receitas Federais), **GPS** (Guia da Previdência Social) e **GARE** (Guia de Arrecadação de Receitas Estaduais, usada por vários estados). São formulários de recolhimento de tributo, cada um com um conjunto próprio de campos obrigatórios — e é por isso que o segmento N tem variantes em vez de um leiaute só.
+
 **Nota prática:** repare que a forma de lançamento **determina o segmento**. Se você está escrevendo um gerador ou um parser, essa é a chave de despacho natural: leia o header de lote, resolva a forma, e só então saiba que tipo de detalhe esperar. Parser que tenta adivinhar o segmento lendo a posição 14 sem contexto do lote funciona, mas perde a validação cruzada que pega metade dos arquivos malformados.
 
 > **No modelo do ASA:** o `Arquivo` guarda `LayoutBanco` e `LayoutTipoArquivo`, e a tabela `PagamentoParametroLayout` amarra `TipoPagamento` (FK para `TipoTransacao`) a um `LayoutIntegrado` por cliente. Ou seja, a forma de lançamento não está no código — está parametrizada por conta e por produto. É o desenho certo, e é também onde vão morar os bugs mais difíceis, porque um parâmetro errado gera um arquivo sintaticamente válido e semanticamente absurdo.
 
 ---
 
-### 11-A.4 Nível 2 — os segmentos
+#### 11.7.4 Nível 2 — os segmentos
 
-#### O par A + B: dinheiro indo para uma conta
+##### O par A + B: dinheiro indo para uma conta
 
 O **segmento A** é o registro principal de crédito em conta, DOC, TED e PIX. É onde estão favorecido, valor e data.
 
@@ -1218,7 +1872,7 @@ O **segmento A** é o registro principal de crédito em conta, DOC, TED e PIX. �
 | 134-148 | Nº do documento atribuído pelo banco | "Nosso número", vem preenchido no retorno |
 | **149-156** | **Data real da efetivação** | Só no retorno |
 | **157-171** | **Valor real da efetivação** | Só no retorno |
-| **231-240** | **Códigos de ocorrência** | Ver 11-A.6 |
+| **231-240** | **Códigos de ocorrência** | Ver 11.7.6 |
 
 Três coisas aqui merecem atenção especial.
 
@@ -1228,7 +1882,7 @@ Três coisas aqui merecem atenção especial.
 
 **As duas decimais são implícitas.** `000000000012345` são R$ 123,45. Isso vale para todo campo de valor do 240.
 
-#### O segmento B: o complemento que virou o coração do PIX
+##### O segmento B: o complemento que virou o coração do PIX
 
 Historicamente, o **B** era o registro chato de endereço do favorecido. Com a chegada das formas `45` e `47`, ele passou a carregar a informação mais importante da transação.
 
@@ -1243,11 +1897,11 @@ O B traz o **tipo/número de inscrição do favorecido** (CPF ou CNPJ), o endere
 
 > **Nota de modelagem:** o par A+B é uma unidade atômica. Nunca separe um B do seu A entre lotes ou arquivos diferentes, e nunca gere um A de PIX sem o B correspondente. No `PixInfo` do ASA isso está resolvido de forma elegante: `ChaveTipo`, `ChavePixUrl` e `QrCodePix` moram na mesma linha que os dados do favorecido, então a atomicidade é garantida pelo modelo e não por disciplina do programador.
 
-#### O segmento C
+##### O segmento C
 
 Complemento opcional do A, usado principalmente em folha. Carrega valores acessórios do lançamento — INSS, IR, FGTS, descontos, abatimentos — e uma segunda conta para casos específicos. Se você não faz folha, provavelmente nunca vai vê-lo.
 
-#### O par J + J-52: pagamento de título
+##### O par J + J-52: pagamento de título
 
 O **segmento J** é o registro de liquidação de boleto. O campo central são as **posições 18-61: o código de barras de 44 posições**. Diferente do A, aqui você não descreve o favorecido — o código de barras já contém banco, moeda, valor, vencimento e identificador do título.
 
@@ -1269,7 +1923,7 @@ O **segmento J-52** é um J estendido, identificado por `52` nas posições 18-1
 
 > **No modelo do ASA:** o desenho mapeia bem. `Pix`, `Ted` e `Tef` são o par A+B; `Boleto` e `Tricon` são o par J + J-52. Note que `BoletoInfo` já tem `CodigoBarra`, `LinhaDigitavel`, `Sacado*` e `Sacador*` — exatamente o conteúdo do J mais o do J-52. E `TriconInfo` tem `NossoNumero` e `SacadorBancoIspb`, sinal de que ali entra título de terceiro com dados de liquidação bancária.
 
-#### Os segmentos O, N e Z
+##### Os segmentos O, N e Z
 
 - **O** — contas de concessionária e tributos **com** código de barras (forma `11`).
 - **N** — tributos **sem** código de barras, com variantes por guia: N1 GPS, N2 DARF Normal, N3 DARF Simples, além de GARE, IPVA e licenciamento. Cada variante tem seu próprio conjunto de campos.
@@ -1279,7 +1933,7 @@ O **segmento J-52** é um J estendido, identificado por `52` nas posições 18-1
 
 ---
 
-### 11-A.5 Nível 3 — o ciclo de estados
+#### 11.7.5 Nível 3 — o ciclo de estados
 
 Aqui está a diferença conceitual mais importante em relação à cobrança: **existem dois ciclos de vida rodando ao mesmo tempo**, e confundi-los é a origem de boa parte dos bugs de produto de pagamento.
 
@@ -1300,17 +1954,23 @@ stateDiagram-v2
 
     state Aceito {
         [*] --> Incluido
-        Incluido --> Rejeitado: crítica de campo\nou saldo insuficiente
+        Incluido --> Rejeitado: crítica ou saldo insuficiente
         Incluido --> Agendado: data futura
         Incluido --> Processando: data hoje
         Agendado --> Processando: chega a data
         Agendado --> Cancelado: exclusão pelo cliente
         Processando --> Efetivado: crédito confirmado
         Processando --> Rejeitado: recusa do destino
-        Efetivado --> Devolvido: devolução\n(MED, conta encerrada)
+        Efetivado --> Devolvido: devolução (MED, conta encerrada)
+
+        Rejeitado --> [*]
+        Cancelado --> [*]
+        Efetivado --> [*]
+        Devolvido --> [*]
     }
 
     ArquivoRejeitado --> [*]
+    Aceito --> [*]
 ```
 
 Três observações que valem mais que o diagrama:
@@ -1319,15 +1979,15 @@ Três observações que valem mais que o diagrama:
 
 **Rejeitado tem dois momentos muito diferentes.** Rejeição na entrada (campo inválido, conta inexistente) chega em minutos e é barata. Rejeição na efetivação (destino recusou, conta encerrada, chave PIX inválida) chega horas depois, quando o cliente já viu o pagamento como "aceito". Se o seu modelo tem um estado só, o cliente não entende o que aconteceu.
 
-**Efetivado não é terminal.** Vale aqui a lição da seção 15: uma devolução pode chegar dias depois, por decisão de terceiro. Modele o caminho de volta desde o começo.
+**Efetivado não é terminal.** Vale aqui a lição do capítulo 15: uma devolução pode chegar dias depois, por decisão de terceiro. Modele o caminho de volta desde o começo.
 
 > **No modelo do ASA:** o enum de `dbo.Status` tem hoje `1 Incluído`, `2 Processando`, `3 Rejeitado`, `4 Cancelado`, `5 Erro`, `6 Finalizado`, `7 Pendente Pix Url`, `8 Processando Pix Url`. Comparando com o diagrama, faltam dois estados que o produto vai precisar mais cedo ou mais tarde: **Agendado** e **Devolvido**. Hoje um pagamento agendado provavelmente fica em `Processando` por dias, o que torna impossível distinguir "está na fila do banco" de "vai sair na semana que vem". E `Erro` versus `Rejeitado` merece um critério escrito: a leitura natural é que `Rejeitado` é recusa de negócio (com código de ocorrência) e `Erro` é falha técnica do próprio worker (sem código). Se essa distinção não estiver documentada, os dois viram sinônimos na prática.
 
 ---
 
-### 11-A.6 Nível 4 — ocorrências
+#### 11.7.6 Nível 4 — ocorrências
 
-#### O campo
+##### O campo
 
 Nas posições **231-240** dos segmentos A e J ficam os códigos de ocorrência do retorno. São 10 posições que comportam **até cinco ocorrências de dois caracteres cada**.
 
@@ -1342,7 +2002,7 @@ Esse é o detalhe que derruba a maior parte dos parsers de primeira viagem:
 
 Duas rejeições, não uma. Um parser que lê `SUBSTRING(linha, 231, 2)` captura `AE` e joga `AN` fora, e aí o suporte passa a tarde explicando ao cliente uma rejeição pela metade.
 
-#### Os códigos
+##### Os códigos
 
 Reprodução parcial da tabela de referência. **A tabela do banco prevalece** — vários bancos redefinem códigos e acrescentam os seus.
 
@@ -1375,7 +2035,7 @@ E o bloco específico de PIX, que é recente e vale conhecer:
 
 Repare no prefixo como pista de escopo: `A*` e `B*` são críticas de registro, `H*` são problemas de lote ou arquivo, `P*` são específicos de PIX. Não é regra formal, mas ajuda a classificar código desconhecido.
 
-#### Ocorrência não é status
+##### Ocorrência não é status
 
 Esta é a distinção que mais economiza dor de cabeça depois.
 
@@ -1389,11 +2049,11 @@ Se você guardar só o status, perdeu a informação. No dia em que um cliente p
 
 ---
 
-### 11-A.7 Como o cliente consome o retorno
+#### 11.7.7 Como o cliente consome o retorno
 
 Antes de decidir *como* gerar o arquivo, vale entender o que acontece com ele do outro lado. Boa parte das regras que parecem arbitrárias existe porque o consumidor é mais rígido do que o padrão.
 
-#### Quem é o "cliente"
+##### Quem é o "cliente"
 
 É a empresa pagadora, e do lado dela quase sempre existe um **ERP** ou um sistema de contas a pagar. Você não está integrando com uma pessoa, está integrando com um software que alguém configurou uma vez e ninguém mais quer mexer.
 
@@ -1406,7 +2066,7 @@ Quatro modos de consumo convivem no mesmo produto:
 | **Conferência manual** | O financeiro abre o arquivo ou um relatório derivado | Muito mais comum do que a engenharia imagina, principalmente em cliente pequeno |
 | **API/webhook em paralelo** | O cliente reage ao evento e usa o CNAB só para contabilidade e auditoria | O CNAB deixa de ser o canal e vira o registro. Mas continua tendo que fechar |
 
-#### O ciclo do lado de lá
+##### O ciclo do lado de lá
 
 Independente do modo, o roteiro é sempre o mesmo:
 
@@ -1428,7 +2088,7 @@ O passo 4 é o que importa, e ele é uma tabela de decisão:
 
 **A confusão entre `00` e `BD` é a mais cara da lista.** Um é "o dinheiro saiu", o outro é "está marcado para sair". Se o seu retorno emite `BD` num momento em que o cliente espera `00`, ou vice-versa, o efeito não é um erro de tela: é um fornecedor que não recebeu ou um título baixado sem pagamento.
 
-#### As expectativas implícitas
+##### As expectativas implícitas
 
 Nada disso está no leiaute, e tudo isso derruba integração:
 
@@ -1439,7 +2099,7 @@ Nada disso está no leiaute, e tudo isso derruba integração:
 - **Encoding e quebra de linha.** ASCII sem acento e `CRLF` continuam sendo exigência de muito importador.
 - **Reprocessamento não é garantido.** ERP idempotente é minoria. Se você reenviar o mesmo arquivo, assuma que o cliente vai dar baixa duas vezes.
 
-#### O que o cliente realmente pergunta
+##### O que o cliente realmente pergunta
 
 Ele nunca pergunta qual segmento ou qual posição. Ele pergunta **"por que o meu título não baixou?"**.
 
@@ -1449,17 +2109,17 @@ Para responder isso em minutos e não em horas, você precisa de um caminho reve
 
 ---
 
-### 11-A.8 Nível 5 — retorno parcial e retorno consolidado
+#### 11.7.8 Nível 5 — retorno parcial e retorno consolidado
 
 Primeiro, o mais importante: **isso não existe no leiaute Febraban**. Não há campo, flag ou tipo de registro que diga "este é um retorno parcial". É uma **convenção comercial** entre a instituição e o cliente. Se a regra parece confusa, muito provavelmente é porque ela é confusa mesmo, e não porque falta um manual.
 
-#### Por que o parcial existe
+##### Por que o parcial existe
 
 Porque as formas de lançamento liquidam em ritmos diferentes. Uma remessa com três lotes — folha por crédito em conta, fornecedores por TED, boletos por J — vira naturalmente "lote 1 fechado hoje de manhã, lotes 2 e 3 pendentes". O parcial é o mecanismo de devolver feedback antes de tudo fechar.
 
 Isso torna o **lote**, e não o arquivo, o recorte natural do parcial.
 
-#### As três regras mecânicas
+##### As três regras mecânicas
 
 **1. Numeração é por arquivo emitido, sempre.** O número do lote começa em 1 e o sequencial de registro começa em 1 dentro de cada lote, no arquivo que você está gerando agora. Se você preservar a numeração da remessa original, vai emitir um arquivo que começa no lote 2 ou que tem buraco na sequência, e muitos ERPs rejeitam. A correlação com a remessa original é feita pelo **nº do documento atribuído pela empresa** (A: 73-92, J: 183-202), não pela numeração.
 
@@ -1467,7 +2127,7 @@ Isso torna o **lote**, e não o arquivo, o recorte natural do parcial.
 
 **3. Lote partido é normal.** Se um lote de 100 pagamentos teve 60 efetivados, emita o lote com 60 detalhes agora e os 40 restantes depois. O mesmo número de lote aparecendo em dois arquivos não é problema, porque a numeração é por arquivo. Só mantenha o par A+B (ou J + J-52) atômico.
 
-#### O modelo de dados que sustenta os dois
+##### O modelo de dados que sustenta os dois
 
 O desenho que evita divergência é tratar parcial e consolidado como **dois recortes da mesma consulta**, saindo do mesmo emissor:
 
@@ -1484,7 +2144,7 @@ Para o parcial funcionar, você precisa de duas coisas: um **cursor por cliente*
 > - `ControlePagamentoReportado (PagamentoID, CodigoStatus)` com PK composta é o registro do que já saiu. A PK sendo `(PagamentoID, CodigoStatus)` significa que o mesmo pagamento pode ser reportado várias vezes, uma por status — o que é exatamente o comportamento correto para um pagamento que vai de agendado a efetivado.
 > - `SequencialArquivo (Documento, SequencialAtual)` é o NSA por cliente. O NSA no header de arquivo precisa ser único e crescente por cedente; muitos ERPs rejeitam repetição e alguns acusam furo na sequência. Incremente dentro da mesma transação que grava o arquivo, nunca antes.
 
-#### A pergunta que precisa ser respondida por quem pediu
+##### A pergunta que precisa ser respondida por quem pediu
 
 **O consolidado repete o que já saiu nos parciais?**
 
@@ -1498,7 +2158,7 @@ Não dá para inferir isso do leiaute. É decisão de produto, e enquanto ela n�
 
 ---
 
-### 11-A.9 O fluxo ponta a ponta
+#### 11.7.9 O fluxo ponta a ponta
 
 Juntando tudo: da chegada da remessa até o consolidado do fechamento.
 
@@ -1525,7 +2185,7 @@ sequenceDiagram
     R->>C: Retorno consolidado (fechamento)
 ```
 
-#### Fase 1 — Ingestão
+##### Fase 1 — Ingestão
 
 **O que entra:** o arquivo bruto, como veio.
 
@@ -1537,7 +2197,7 @@ Isso parece burocracia até o primeiro arquivo que quebra o parser. Com as linha
 
 **Estado:** o arquivo nasce recebido. Nenhum pagamento existe ainda.
 
-#### Fase 2 — Validação estrutural
+##### Fase 2 — Validação estrutural
 
 **O que se olha:** tamanho de linha, tipos de registro na ordem certa, banco, convênio, conta, NSA, coerência dos trailers.
 
@@ -1547,7 +2207,7 @@ Falha aqui derruba o arquivo inteiro. Registre em `ArquivoErro` com o máximo de
 
 **Estado:** arquivo rejeitado, ou aceito.
 
-#### Fase 3 — Explosão em pagamentos
+##### Fase 3 — Explosão em pagamentos
 
 Cada segmento vira uma linha de movimentação com seu `Info` correspondente:
 
@@ -1562,7 +2222,7 @@ Aqui você preenche `NumeroLote` (que lote da remessa originou aquele pagamento)
 
 **Estado:** `Incluído`.
 
-#### Fase 4 — Crítica de negócio e autorização
+##### Fase 4 — Crítica de negócio e autorização
 
 Agora entram saldo, alçada, limites, validade do favorecido e chave PIX.
 
@@ -1572,7 +2232,7 @@ O que for rejeitado aqui **já ganha código de ocorrência**, e essa é a prime
 
 **Estados:** `Rejeitado` (com ocorrência) ou segue.
 
-#### Fase 5 — Efetivação
+##### Fase 5 — Efetivação
 
 O pagamento vai para o trilho conforme a forma de lançamento, respeitando a janela: PIX 24/7, TED com horário, boleto com corte, agendado esperando a data.
 
@@ -1580,7 +2240,7 @@ O pagamento vai para o trilho conforme a forma de lançamento, respeitando a jan
 
 **Estados:** `Agendado` → `Processando` → `Efetivado` ou `Rejeitado`.
 
-#### Fase 6 — Captura do desfecho
+##### Fase 6 — Captura do desfecho
 
 Do trilho voltam quatro informações, e todas as quatro importam:
 
@@ -1591,7 +2251,7 @@ Do trilho voltam quatro informações, e todas as quatro importam:
 
 Grave em `CodigoOcorrencia`, `CodigoAutenticacao` e nos campos de data e valor real. É esse conjunto que preenche o retorno.
 
-#### Fase 7 — Emissão do retorno
+##### Fase 7 — Emissão do retorno
 
 **De onde vem cada campo:**
 
@@ -1617,7 +2277,7 @@ Grave em `CodigoOcorrencia`, `CodigoAutenticacao` e nos campos de data e valor r
 
 Mesma consulta, filtro diferente. Mesmo emissor.
 
-#### Fase 8 — Publicação
+##### Fase 8 — Publicação
 
 Disponibiliza no SFTP ou expõe pela API, com o nome de arquivo no padrão que o cliente configurou.
 
@@ -1630,13 +2290,13 @@ Disponibiliza no SFTP ou expõe pela API, com o nome de arquivo no padrão que o
 
 Consumir o NSA fora da transação é um erro comum e caro: se a geração falhar depois, o sequencial já foi queimado e o próximo arquivo sai com furo.
 
-#### Fase 9 — Depois
+##### Fase 9 — Depois
 
 Devolução, cancelamento tardio e reprocessamento. Cada um gera um novo evento, com nova ocorrência, que entra no próximo parcial. Nunca sobrescreva o evento anterior.
 
 ---
 
-#### Velocidade: onde o tempo realmente vai
+##### Velocidade: onde o tempo realmente vai
 
 Uma intuição errada comum é achar que o gargalo é montar as linhas de 240 caracteres. Não é — isso é concatenação de string, roda em microssegundos. O tempo vai em três lugares:
 
@@ -1667,9 +2327,9 @@ O `INCLUDE` faz o índice cobrir a consulta e evita o lookup na tabela base. Rep
 
 ---
 
-### 11-A.10 Armadilhas de implementação
+#### 11.7.10 Armadilhas de implementação
 
-**Dinheiro em inteiro, sempre.** Vale a seção 6 inteira, com um agravante: o 240 já entrega o valor como inteiro de centavos com decimais implícitas. Converter para decimal na leitura e voltar para inteiro na escrita é introduzir dois pontos de erro onde havia zero.
+**Dinheiro em inteiro, sempre.** Vale o capítulo 6 inteiro, com um agravante: o 240 já entrega o valor como inteiro de centavos com decimais implícitas. Converter para decimal na leitura e voltar para inteiro na escrita é introduzir dois pontos de erro onde havia zero.
 
 **A linha tem exatamente 240 caracteres.** Não 239, não 241. Truncamento silencioso em nome de favorecido (30 posições) e observação são a causa mais comum de "o arquivo passou no meu teste e o banco rejeitou".
 
@@ -1677,13 +2337,13 @@ O `INCLUDE` faz o índice cobrir a consulta e evita o lookup na tabela base. Rep
 
 **Idempotência precisa de hash de conteúdo, não só de identificador.** Reprocessar o mesmo arquivo de retorno não pode duplicar lançamento. As tabelas `*Idempotencia (HashID)` e `*RetornoIdempotencia (RetornoID, Data)` do ASA cobrem os dois lados — envio e retorno — e a PK composta com `Data` no retorno é o que permite o mesmo pagamento ter eventos em dias diferentes sem colidir.
 
-**Retorno chega fora de ordem.** É a mesma observação da seção 11 sobre protocolo assíncrono, e em pagamento ela é mais grave: uma efetivação que chega antes do agendamento não pode fazer o pagamento voltar para agendado. Guarde a ordem por data do evento, não por ordem de chegada do arquivo, e trate transição inválida como alerta, não como exceção fatal.
+**Retorno chega fora de ordem.** É a mesma observação da seção 11.4 sobre protocolo assíncrono, e em pagamento ela é mais grave: uma efetivação que chega antes do agendamento não pode fazer o pagamento voltar para agendado. Guarde a ordem por data do evento, não por ordem de chegada do arquivo, e trate transição inválida como alerta, não como exceção fatal.
 
 **Saldo é problema de arquitetura, não de validação.** Entre a inclusão e a efetivação existe uma janela em que o dinheiro está comprometido mas não saiu. Se o saldo disponível não descontar os agendados, o cliente gasta o mesmo dinheiro duas vezes. É o mesmo erro de `disponível = aprovado − utilizado` da seção 13.2, e a correção é a mesma: falta subtrair o reservado.
 
 ---
 
-### Checkpoint
+#### Checkpoint — pagamento
 
 1. Por que uma empresa que paga folha, fornecedores por TED e boletos gera três lotes, e não um?
 2. Qual campo do segmento A você deve usar para correlacionar remessa e retorno, e por que não conta, valor e data?
@@ -1692,20 +2352,36 @@ O `INCLUDE` faz o índice cobrir a consulta e evita o lookup na tabela base. Rep
 5. Um arquivo foi aceito. Isso significa que os pagamentos dele foram aceitos?
 6. Por que "agendado" precisa ser um estado próprio no modelo?
 7. Quantas ocorrências cabem nas posições 231-240, e o que acontece com quem lê só as duas primeiras?
-8. Por que persistir `CodigoOcorrencia` bruto se você já derivou o status?
+8. Por que confundir `00` com `BD` é o erro mais caro do lado do cliente?
 9. Num retorno parcial, o trailer de arquivo conta os registros de quê?
-10. Por que a numeração de lote não deve ser herdada da remessa original?
-11. Qual pergunta precisa ser respondida antes de implementar o consolidado?
-12. Por que confundir `00` com `BD` é o erro mais caro do lado do cliente?
-13. Por que escrever o arquivo direto no destino do SFTP é arriscado?
-14. Qual é a causa mais comum de ticket sobre divergência entre retorno e extrato?
-15. Por que gravar as linhas brutas na ingestão, antes de interpretar?
-16. Qual a ordem correta entre commitar a transação e publicar o arquivo, e por quê?
-17. Por que o NSA deve ser incrementado dentro da transação de geração?
-18. Onde está o gargalo real da geração de um retorno parcial em volume alto?
-19. Por que paralelizar a geração dentro de um mesmo cliente é má ideia?
+10. Qual a ordem correta entre commitar a transação e publicar o arquivo, e por quê?
+11. Por que o NSA deve ser incrementado dentro da transação de geração?
+12. Onde está o gargalo real da geração de um retorno parcial em volume alto?
 
-*Respostas: (1) porque o lote agrupa por tipo de serviço e forma de lançamento, e as três são combinações diferentes; (2) o nº do documento atribuído pela empresa, posições 73-92, porque conta, valor e data colidem quando o mesmo valor é pago duas vezes ao mesmo favorecido, o que é rotina em folha e aluguel; (3) porque o valor solicitado e o valor efetivamente pago divergem legitimamente quando o banco calcula desconto, mora ou multa na data; (4) ele passa a carregar a forma de iniciação e a chave PIX ou URL do QR Code, e vira a parte menos padronizada do leiaute entre bancos; (5) não — a validação estrutural do arquivo é independente da crítica de cada registro, e um arquivo aceito pode conter pagamentos rejeitados; (6) porque um agendado já consumiu validação e pode ter comprometido saldo, mas ainda é cancelável, então tratá-lo como "nada aconteceu" faz o saldo disponível ficar errado; (7) até cinco, de dois caracteres cada, e quem lê só as duas primeiras descarta rejeições e explica ao cliente uma recusa pela metade; (8) porque o mapeamento pode estar errado e o dado bruto é a única forma de reprocessar sem pedir o arquivo de novo ao banco; (9) do próprio arquivo emitido, nunca da remessa original; (10) porque a numeração é por arquivo e herdar gera arquivo começando fora do 1 ou com furo na sequência, o que muitos ERPs rejeitam; (11) se o consolidado repete o que já saiu nos parciais, porque disso depende o cliente dar ou não baixa em duplicidade; (12) porque `00` significa que o dinheiro saiu e `BD` que está apenas marcado para sair, e trocar um pelo outro resulta em fornecedor não pago ou título baixado sem pagamento; (13) porque o ERP pode ler o arquivo pela metade — escreva com extensão temporária e renomeie, já que o rename é atômico e o upload não; (14) datas diferentes, porque o extrato mostra a data real da efetivação e o cliente importou a data solicitada; (15) porque sem elas um arquivo que quebra o parser só pode ser reprocessado se o cliente ainda tiver o original, o que raramente acontece; (16) commitar primeiro e publicar depois, porque a falha resultante (achar que enviou sem ter enviado) é detectável e reexecutável, enquanto a inversa deixa o cliente com um arquivo que o seu sistema desconhece; (17) porque consumir o sequencial fora dela queima o número se a geração falhar, e o próximo arquivo sai com furo na sequência; (18) na consulta que decide o recorte, não na montagem das linhas — daí a necessidade de índice por cliente e status, com colunas cobertas; (19) porque o NSA é sequencial por cliente e dois geradores simultâneos disputam o mesmo contador, enquanto entre clientes distintos não há contenção alguma.*
+<details>
+<summary>Respostas</summary>
+
+(1) Porque o lote agrupa por tipo de serviço e forma de lançamento, e as três são combinações diferentes. (2) O nº do documento atribuído pela empresa, posições 73-92, porque conta, valor e data colidem quando o mesmo valor é pago duas vezes ao mesmo favorecido — rotina em folha e aluguel. (3) Porque o valor solicitado e o valor efetivamente pago divergem legitimamente quando o banco calcula desconto, mora ou multa na data. (4) Ele passa a carregar a forma de iniciação e a chave PIX ou URL do QR Code, e vira a parte menos padronizada do leiaute entre bancos. (5) Não — a validação estrutural do arquivo é independente da crítica de cada registro, e um arquivo aceito pode conter pagamentos rejeitados. (6) Porque um agendado já consumiu validação e pode ter comprometido saldo, mas ainda é cancelável; tratá-lo como "nada aconteceu" faz o saldo disponível ficar errado. (7) Até cinco, de dois caracteres cada; quem lê só as duas primeiras descarta rejeições e explica ao cliente uma recusa pela metade. (8) Porque `00` significa que o dinheiro saiu e `BD` que está apenas marcado para sair — trocar um pelo outro resulta em fornecedor não pago ou título baixado sem pagamento. (9) Do próprio arquivo emitido, nunca da remessa original. (10) Commitar primeiro e publicar depois: a falha resultante (achar que enviou sem ter enviado) é detectável e reexecutável, enquanto a inversa deixa o cliente com um arquivo que o seu sistema desconhece. (11) Porque consumir o sequencial fora dela queima o número se a geração falhar, e o próximo arquivo sai com furo na sequência. (12) Na consulta que decide o recorte, não na montagem das linhas — daí a necessidade de índice por cliente e status, com colunas cobertas.
+
+</details>
+
+#### Exercícios
+
+1. **Escreva o parser das posições 231-240** tratando as cinco ocorrências possíveis, e teste-o com `"00        "`, `"AEAN      "`, `"AEANARBB  "` e `"          "`. O último caso — dez brancos — é o que mais derruba implementação ingênua.
+2. **Gere um retorno parcial** a partir de uma remessa de três lotes em que só o primeiro fechou, e prove por teste que o trailer de arquivo conta os registros do arquivo emitido, não os da remessa original.
+3. **Implemente o fator de vencimento** da seção 11.3 e escreva um teste com quatro datas: uma anterior ao rollover, o próprio 21/02/2025, o 22/02/2025 e uma posterior. Confirme que nenhuma delas produz fator fora da faixa `1000`–`9999`.
+
+---
+
+### 11.8 CNAB × APIs modernas
+
+O mercado está migrando de **arquivo em lote (CNAB)** para **APIs em tempo real**.
+
+O motivo principal é regulatório: regras como o ***split payment*** da Reforma Tributária — em que o tributo é separado e recolhido automaticamente no instante do pagamento, em vez de ser apurado pelo vendedor depois — exigem confirmação imediata. Um ciclo de remessa e retorno com corte diário simplesmente não entrega isso.
+
+> **Analogia:** é a migração de *batch* noturno para evento em streaming. O arquivo continua existindo por inércia e por volume, mas tudo que exige resposta síncrona vai vazando para a API.
+
+O CNAB não vai desaparecer no curto prazo. Mas isso explica por que os bancos vêm expondo APIs REST paralelas ao mesmo fluxo que antes só existia via arquivo — e por que, na prática, você vai manter os dois canais vivos e conciliando entre si por um bom tempo.
 
 ---
 
@@ -1774,6 +2450,22 @@ O **chargeback** é a contestação de uma compra pelo portador junto ao **emiss
 
 > Para o dev: chargeback significa que uma transação **aprovada e liquidada** ainda pode ser revertida meses depois. Se sua modelagem trata "pago" como estado terminal, o chargeback quebra seu modelo. O mesmo raciocínio vale para o MED do PIX (capítulo 15).
 
+### Checkpoint
+
+1. Quais são os cinco papéis do arranjo de quatro partes, e por que o nome não bate com a contagem?
+2. Autorização, captura e liquidação: qual delas move dinheiro?
+3. Uma autorização que nunca é capturada e nunca expira — qual o efeito no cliente?
+4. No chargeback procedente, quem normalmente absorve a perda?
+5. Quem define as regras e prazos de chargeback: o Bacen ou a bandeira?
+6. Por que a antecipação de recebíveis de cartão depende de registradora?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Portador, emissor, estabelecimento, credenciadora e bandeira. O nome "quatro partes" vem do modelo clássico (portador, emissor, credenciadora e EC), com a bandeira operando o trilho entre emissor e credenciadora em vez de ser contada como parte. (2) Só a liquidação. A autorização reserva o limite e a captura confirma a venda, mas nenhuma das duas transfere recursos. (3) O limite dele fica congelado indefinidamente — por isso reserva precisa de expiração, tratada como TTL. (4) O lojista, via credenciadora — não o banco emissor. (5) As bandeiras, que são as instituidoras desses arranjos. O Bacen regula o arranjo, mas as regras de disputa são do instituidor. (6) Porque o registro central é o que impede o mesmo recebível de ser oferecido como garantia a mais de um financiador, e é o que dá oponibilidade a terceiros.
+
+</details>
+
 ---
 
 ## 13. Área de crédito
@@ -1803,7 +2495,7 @@ graph TD
 ### Correspondentes bancários e registradoras
 
 - **Correspondentes bancários** — empresas contratadas por instituições financeiras para originar operações (ex.: lojas, fintechs de crédito) em nome do banco, sob regulação do Bacen (Resolução CMN específica). O correspondente não é o credor; ele atua como canal.
-- **Registradoras de recebíveis** (Núclea, B3, CERC, entre outras) — plataformas onde duplicatas, recebíveis de cartão e outros direitos creditórios são registrados centralmente, permitindo rastreabilidade e uso como garantia (antecipação de recebíveis, garantia de operações de crédito). A **liquidação centralizada de recebíveis** (Resolução BCB nº 150 e correlatas) reduziu risco de duplicidade de garantia — um problema real que existia quando o mesmo recebível podia ser oferecido como garantia em mais de um banco.
+- **Registradoras de recebíveis** (Núclea, B3, CERC, entre outras) — plataformas onde duplicatas, recebíveis de cartão e outros direitos creditórios são registrados centralmente. A seção 13.6 as trata em detalhe; por ora basta saber que elas existem e que é nelas que um recebível vira garantia oponível a terceiros.
 - **CVM/B3** entra quando o crédito vira **instrumento negociável** — ou seja, deixa de ser um contrato entre duas partes e passa a ser um papel que investidores compram e vendem. Aí o crédito sai do universo Bacen puro e entra em mercado de capitais. Os principais formatos:
   - **Debênture** — título de dívida emitido por uma empresa para captar diretamente com investidores, sem passar por banco.
   - **CRI / CRA** (Certificado de Recebíveis Imobiliários / do Agronegócio) — papéis lastreados em recebíveis daqueles setores.
@@ -1814,21 +2506,37 @@ graph TD
 Se você vai trabalhar em crédito, este é **o** modelo mental central. Toda operação percorre as mesmas etapas, e cada uma vira um conjunto de serviços, estados e eventos no seu sistema.
 
 ```mermaid
-graph TD
-    A["1. Originação<br/>proposta entra"] --> B["2. Análise<br/>score, políticas, SCR"]
-    B --> C{"3. Decisão"}
-    C -->|Aprovado| D["4. Formalização<br/>contrato, assinatura"]
-    C -->|Negado| X["Recusa<br/>(motivo registrado)"]
-    D --> E["5. Desembolso<br/>dinheiro sai"]
-    E --> F["6. Gestão da carteira<br/>parcelas, cobrança"]
-    F -->|Pagou tudo| G["7. Quitação"]
-    F -->|Atrasou| H["8. Inadimplência<br/>régua de cobrança"]
-    H --> I["9. Provisão<br/>reconhece perda esperada"]
-    I --> J["10. Write-off<br/>baixa contábil"]
-    J --> K["11. Recuperação<br/>ou venda da carteira"]
+stateDiagram-v2
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
 
-    style C fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    [*] --> Originacao
+    Originacao --> Analise: score, políticas, SCR
+    Analise --> Decisao
+
+    Decisao --> Recusa: negado (motivo registrado)
+    Decisao --> Formalizacao: aprovado
+    Recusa --> [*]
+
+    Formalizacao --> Desembolso: contrato e garantias
+    Desembolso --> Gestao: parcelas e cobrança
+
+    Gestao --> Quitacao: pagou tudo
+    Gestao --> Inadimplencia: atrasou
+    Quitacao --> [*]
+
+    Inadimplencia --> Gestao: renegociou ou regularizou
+    Inadimplencia --> Provisao: perda esperada reconhecida
+    Provisao --> Gestao: risco melhorou
+    Provisao --> WriteOff: baixa para prejuízo
+
+    WriteOff --> Recuperacao: recebeu depois, ou vendeu a carteira
+    WriteOff --> [*]
+    Recuperacao --> [*]
+
+    class Decisao destaque
 ```
+
+Duas leituras do diagrama que a versão linear escondia: **inadimplência tem volta** — renegociação e regularização devolvem a operação à gestão normal, e é o desfecho mais comum —, e **write-off pode ser terminal**. Recuperação é possível, não obrigatória; modelar o caminho como se todo crédito baixado voltasse é otimismo que aparece depois em projeção de caixa.
 
 **O que cada etapa significa tecnicamente:**
 
@@ -1845,7 +2553,7 @@ graph TD
 7. **Inadimplência** — a **régua de cobrança**: sequência escalonada de ações por faixa de atraso (lembrete → notificação → negativação → protesto → cobrança judicial). Dois desses termos merecem definição:
    - **Negativação** — inclusão do nome do devedor nos cadastros de inadimplentes dos bureaus de crédito, o que restringe seu acesso a crédito no mercado inteiro.
    - **Protesto** — registro formal da dívida em cartório, que dá publicidade legal à inadimplência e reforça o título como prova para execução judicial.
-8. **Provisão, write-off e recuperação** — detalhados em 12.3.
+8. **Provisão, write-off e recuperação** — detalhados na seção 13.4.
 
 > **Armadilha de modelagem:** o estado da *operação de crédito* e o estado da *cobrança* são coisas diferentes e evoluem em ritmos diferentes. Colapsar os dois num único enum é uma das refatorações mais dolorosas que se faz nesse domínio.
 
@@ -2027,7 +2735,9 @@ Base legal: **Lei nº 5.474/68** (Lei das Duplicatas Mercantis) e, mais recentem
 
 > **Importante:** cartular e escritural **não são títulos diferentes** — a Lei 13.775/18 não cria um novo instrumento, apenas regulamenta uma nova forma de emitir e circular a mesma duplicata da Lei 5.474/68.
 
-**Aceite:** o sacado tem até 15 dias para dar aceite (formal, ou "aceite presumido" quando há comprovante de entrega/prestação e ausência de recusa justificada). Sem aceite e sem pagamento, o título pode ser **protestado** — na duplicata escritural, o protesto usa o extrato eletrônico da entidade registradora no lugar do documento físico apresentado em cartório.
+**Aceite:** o **art. 7º da Lei nº 5.474/68** dá ao sacado **10 dias**, contados da apresentação, para devolver a duplicata assinada ou acompanhada de declaração escrita com as razões da recusa. É desse prazo que decorre o **aceite presumido**: passados os 10 dias sem devolução e sem recusa justificada, havendo comprovante de entrega da mercadoria ou da prestação do serviço, o título vale como aceito para fins de protesto e execução. Sem aceite e sem pagamento, o título pode ser **protestado** — na duplicata escritural, o protesto usa o extrato eletrônico da entidade registradora no lugar do documento físico apresentado em cartório.
+
+> **Por que o número importa:** o prazo não é uma formalidade cartorial. Ele é o gatilho que transforma silêncio em obrigação exigível, e é ele que um sistema de cobrança precisa temporizar. Errar de 10 para 15 dias significa protestar cedo demais (e responder por isso) ou tarde demais (e perder a régua).
 
 **Por que isso importa para quem constrói sistemas de crédito/cobrança:**
 
@@ -2079,7 +2789,7 @@ Esta é a parte que mais gera confusão em integração, porque três coisas dif
 
 #### A precisão que evita bug: baixa de quê?
 
-Aqui está o ponto da sua pergunta. É correto dizer que existe uma etapa de baixa depois da liquidação — mas o objeto da baixa geralmente **não é o recebível**, e sim o **ônus** que pesa sobre ele.
+O ponto que mais gera bug aqui é este. É correto dizer que existe uma etapa de baixa depois da liquidação — mas o objeto da baixa geralmente **não é o recebível**, e sim o **ônus** que pesa sobre ele.
 
 A distinção na prática:
 
@@ -2089,13 +2799,20 @@ A distinção na prática:
 
 E a desconstituição não acontece só por liquidação. Ela também ocorre por **cancelamento da operação**, **resilição do contrato** pelo recebedor (com prazo regulatório de até dois dias úteis para a credenciadora solicitar a baixa) e **substituição de garantia**. Um sistema que só desconstitui no caminho feliz deixa gravame preso nos demais.
 
+> **Resilição não é rescisão.** **Resilição** é o encerramento do contrato por vontade das partes — ou de uma delas, quando a lei ou o contrato permitem — sem que ninguém tenha descumprido nada. **Rescisão** é o encerramento por inadimplemento, e traz consequências (multa, perdas e danos) que a resilição não traz. O CNAB e os manuais de registradora usam o primeiro termo, e mapeá-lo para "cancelamento por quebra de contrato" no seu domínio produz o tratamento errado.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Registrada: credenciadora registra<br/>a agenda de recebíveis
+
+    Registrada --> Liquidada: chega a data de liquidação<br/>(UR sem ônus)
     Registrada --> Onerada: constituição de<br/>gravame ou cessão
-    Onerada --> Liquidada: chega a data<br/>de liquidação da UR
-    Liquidada --> Livre: desconstituição<br/>do gravame
+
+    Onerada --> Liquidada: chega a data de liquidação<br/>(pagamento direcionado)
     Onerada --> Livre: cancelamento, resilição<br/>ou substituição
+
+    Liquidada --> Livre: desconstituição do gravame
+    Liquidada --> [*]: se não havia ônus
     Livre --> [*]
 
     note right of Onerada
@@ -2103,6 +2820,10 @@ stateDiagram-v2
         lastrear outra operação
     end note
 ```
+
+Repare na aresta que muita implementação esquece: **`Registrada --> Liquidada`**. Uma UR sem ônus nenhum liquida na data e acabou — não passa por gravame nem precisa de desconstituição. As duas coisas são independentes, e é exatamente essa independência que o diagrama precisa mostrar.
+
+> **Fio condutor — a Padaria do João.** Duas semanas depois da venda, a padaria precisa de caixa para comprar farinha e leva a duplicata de R$ 10.000 ao banco. O banco consulta a registradora, confirma que aquele recebível não está onerado nem cedido a ninguém, paga R$ 9.700 à padaria (deságio de 3%) e registra a operação. A partir daí três coisas passam a ser verdade ao mesmo tempo: o dinheiro já está na conta da padaria, o Mercado da Esquina ainda não pagou nada, e a padaria continua respondendo pelo título se o Mercado não pagar. É a coobrigação da seção 11.5 vista pelo lado do crédito — e é por isso que "antecipou" nunca é o mesmo que "recebeu".
 
 #### Interoperabilidade: o registro é do mercado, não do seu banco
 
@@ -2118,7 +2839,7 @@ As registradoras são **interoperáveis** por convenção sob supervisão do Bac
 - **Eventos assíncronos e fora de ordem.** Confirmações de registro, liquidação e desconstituição chegam por caminhos distintos e em tempos distintos. Processamento idempotente, com chave por evento, é requisito.
 - **A norma muda.** A Resolução BCB nº 264/2022 é a base do registro de recebíveis de arranjo de pagamento, e já foi alterada — a Resolução BCB nº 514/2025 trouxe mudanças com efeitos a partir de maio de 2026. Prazos e comandos devem estar em configuração.
 
-> **Resumo da sua dúvida, em uma frase:** cadastra-se o recebível e constitui-se o ônus; a UR liquida por conta própria na data; e o que exige comando explícito de baixa é a **desconstituição do gravame** — que também precisa acontecer nos casos de cancelamento e resilição, não só na liquidação.
+> **Em uma frase:** cadastra-se o recebível e constitui-se o ônus; a UR liquida por conta própria na data; e o que exige comando explícito de baixa é a **desconstituição do gravame** — que também precisa acontecer nos casos de cancelamento e resilição, não só na liquidação.
 
 ### Checkpoint
 
@@ -2134,7 +2855,20 @@ As registradoras são **interoperáveis** por convenção sob supervisão do Bac
 10. O que mudou com a Resolução CMN 4.966/2021 e por que isso é um problema de arquitetura de dados?
 11. Numa antecipação de recebíveis, o que exige comando explícito de baixa na registradora?
 
-*Respostas: (1) originação, análise, decisão, formalização, desembolso, gestão, quitação ou inadimplência, provisão, write-off e recuperação; (2) falta subtrair o reservado — valores autorizados e ainda não liquidados, sem os quais o cliente gasta o mesmo limite duas vezes; (3) porque a espera protege quem está sob coação, enquanto reduzir exposição nunca precisa ser barrado; (4) porque empresas do mesmo grupo econômico ou com dependência econômica entre si contam como um único cliente; (5) real é vinculada a um bem, fidejussória a uma pessoa que se responsabiliza; (6) LTV é a razão entre o emprestado e o valor do bem, e o haircut é a margem de segurança para desvalorização, custo e demora da execução; (7) não — sem registro no órgão competente ela não vale contra terceiros, e quem registrar primeiro tem preferência; (8) o depositante, não o banco: devolve até R$ 250 mil por CPF/CNPJ por instituição se ela quebrar; (9) não — sai do ativo contábil mas continua existindo juridicamente; (10) a provisão passou de perda incorrida para perda esperada, exigindo histórico granular de atributos de risco por operação ao longo do tempo; (11) a desconstituição do gravame — a UR liquida sozinha na data, mas o ônus só sai por comando, e também precisa sair em cancelamento e resilição.*
+12. Quantos dias o sacado tem para dar aceite numa duplicata, e o que acontece se ele não fizer nada?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Originação, análise, decisão, formalização, desembolso, gestão, quitação ou inadimplência, provisão, write-off e recuperação — lembrando que inadimplência tem volta e write-off pode ser terminal. (2) Falta subtrair o reservado — valores autorizados e ainda não liquidados, sem os quais o cliente gasta o mesmo limite duas vezes. (3) Porque a espera protege quem está sob coação, enquanto reduzir exposição nunca precisa ser barrado. (4) Porque empresas do mesmo grupo econômico ou com dependência econômica entre si contam como um único cliente. (5) Real é vinculada a um bem, fidejussória a uma pessoa que se responsabiliza. (6) LTV é a razão entre o emprestado e o valor do bem; o haircut é a margem de segurança para desvalorização, custo e demora da execução. (7) Não — sem registro no órgão competente ela não vale contra terceiros, e quem registrar primeiro tem preferência. (8) O depositante, não o banco: devolve até R$ 250 mil por CPF/CNPJ por instituição se ela quebrar. (9) Não — sai do ativo contábil mas continua existindo juridicamente. (10) A provisão passou de perda incorrida para perda esperada, exigindo histórico granular de atributos de risco por operação ao longo do tempo. (11) A desconstituição do gravame — a UR liquida sozinha na data, mas o ônus só sai por comando, e também precisa sair em cancelamento e resilição. (12) Dez dias, contados da apresentação, pelo art. 7º da Lei 5.474/68. O silêncio, havendo comprovante de entrega ou de prestação, configura aceite presumido — o título passa a valer como aceito.
+
+</details>
+
+### Exercícios
+
+1. **Implemente `disponível = aprovado − utilizado − reservado`** com controle de concorrência e prove, com duas requisições simultâneas que cabem sozinhas mas não juntas, que só uma passa. Depois acrescente expiração de reserva e mostre que o limite volta.
+2. **Modele a garantia como entidade com ciclo de vida próprio** (constituída, registrada, em execução, liberada) e escreva a regra que impede o desembolso antes da confirmação de registro. Teste o caminho em que o registro falha depois do contrato assinado.
+3. **Escreva a máquina de estados do gravame** da seção 13.6, incluindo a desconstituição por cancelamento, por resilição e por substituição. Prove por teste que nenhum caminho deixa gravame ativo sobre UR já liquidada.
 
 ---
 
@@ -2144,7 +2878,11 @@ Este é provavelmente o capítulo mais subestimado por devs vindos de outros dom
 
 ### KYC e KYB: conheça seu cliente
 
-**KYC (Know Your Customer)** para pessoa física e **KYB (Know Your Business)** para pessoa jurídica são as obrigações de identificar e qualificar quem entra na instituição. Na prática, o onboarding precisa:
+**KYC (Know Your Customer)** para pessoa física e **KYB (Know Your Business)** para pessoa jurídica são as obrigações de identificar e qualificar quem entra na instituição.
+
+> **Analogia:** KYC é autenticação; diligência contínua é autorização reavaliada a cada requisição. Nenhum sistema sério confere credencial uma vez no login e confia para sempre — e nenhuma instituição pode identificar o cliente no onboarding e parar por aí. Mudança de comportamento transacional é o equivalente a um token cujo escopo não bate mais com o que está sendo pedido.
+
+Na prática, o onboarding precisa:
 
 - Identificar e validar documentos (com prova de vida/biometria contra fraude de identidade);
 - Verificar consistência dos dados (CPF/CNPJ na Receita, endereço, renda declarada);
@@ -2157,12 +2895,15 @@ Este é provavelmente o capítulo mais subestimado por devs vindos de outros dom
 
 A instituição é obrigada a **monitorar transações** e **comunicar** operações suspeitas ao **COAF** (Conselho de Controle de Atividades Financeiras). Tecnicamente, isso significa que existe — ou você vai construir — um sistema de:
 
-- **Regras e tipologias** — padrões que disparam alerta (fracionamento de valores para escapar de limiares, movimentação incompatível com a renda declarada, transações circulares entre contas relacionadas, uso de "contas laranja"). É detecção de anomalia, com a mesma tensão entre falso positivo e falso negativo que você conhece de antifraude: regra frouxa deixa passar crime, regra apertada afoga o time de análise;
+- **Regras e tipologias** — padrões que disparam alerta (fracionamento de valores para escapar de limiares, movimentação incompatível com a renda declarada, transações circulares entre contas relacionadas, uso de "contas laranja");
+
+  > **Analogia:** PLD é um sistema de detecção de intrusão apontado para dinheiro. As tipologias são as assinaturas conhecidas; o comportamento incompatível com o perfil é a detecção por anomalia; e a fila de análise é o SOC. Vale inclusive a curva ROC: baixar o limiar pega mais crime e afoga o time em falso positivo, subir o limiar limpa a fila e deixa passar o que importa. A diferença é que aqui o custo do falso negativo não é um incidente de segurança — é responsabilização da instituição perante o regulador, e o do falso positivo é um cliente legítimo com a conta travada.
 - **Fila de análise** — alertas revisados por analistas humanos;
 - **Comunicação ao COAF** — dentro de prazo regulatório, e **sem informar o cliente** (a comunicação é sigilosa por lei).
 
 ```mermaid
 graph LR
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
     T["Transação"] --> M["Motor de monitoramento<br/>(regras + modelos)"]
     M -->|Normal| OK["Segue o fluxo"]
     M -->|Suspeita| A["Alerta gerado"]
@@ -2170,7 +2911,7 @@ graph LR
     AN -->|Descartado| OK
     AN -->|Confirmado| COAF["Comunicação ao COAF<br/>(sigilosa)"]
 
-    style COAF fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    class COAF destaque
 ```
 
 ### Sigilo bancário
@@ -2187,6 +2928,8 @@ Regido pela **Lei Complementar nº 105/2001**: dados de operações e serviços 
 A **LGPD (Lei nº 13.709/2018)** se soma ao sigilo bancário — não o substitui. Pontos que afetam arquitetura:
 
 - **Base legal** — em banco, boa parte do tratamento se apoia em *obrigação legal/regulatória* e *execução de contrato*, não em consentimento. Isso é importante: o cliente **não pode** pedir exclusão de dados que a instituição é obrigada a reter.
+
+  > **Analogia:** é log de auditoria com retenção compulsória. Você não apaga porque alguém pediu; você apaga quando a política de retenção permite. A diferença entre "não quero mais" e "posso apagar" é exatamente a diferença entre consentimento e obrigação legal como base do tratamento.
 - **Retenção** — normas do SFN exigem guarda de registros por prazos longos (tipicamente 5 a 10 anos, conforme o tipo). "Direito ao esquecimento" convive com essa obrigação.
 - **Minimização** — colete só o necessário para a finalidade declarada.
 - **Trilha de auditoria** — quem acessou o quê, quando e por quê, de forma imutável.
@@ -2199,6 +2942,24 @@ Sob o acordo internacional de **Basileia**, cada instituição precisa manter **
 
 Instituições têm **ouvidoria obrigatória** como última instância interna, e o Bacen publica ranking de reclamações. Uma falha sistêmica no seu código — cobrança duplicada, boleto emitido errado, PIX não creditado — vira reclamação registrada e pode virar processo administrativo. É a tradução concreta do **risco operacional** do capítulo 3.
 
+> **Analogia:** o ranking de reclamações do Bacen é um painel público de SLO com o nome da sua empresa nele. A diferença é que o alerta não chega no seu canal — chega na imprensa e na diretoria.
+
+### Checkpoint
+
+1. Qual a diferença entre KYC e diligência contínua?
+2. Por que a comunicação ao COAF não pode ser informada ao cliente?
+3. Logar o payload completo de uma transação é má prática ou infração?
+4. Um cliente pede exclusão dos dados dele. A instituição é obrigada a atender?
+5. Por que existe limite de exposição por cliente, e de onde vem essa regra?
+6. O que é beneficiário final e por que ele importa no KYB?
+
+<details>
+<summary>Respostas</summary>
+
+(1) KYC é a identificação e qualificação no momento em que o cliente entra; a diligência contínua é a reavaliação ao longo do relacionamento, disparada por mudança de comportamento transacional. (2) Porque a comunicação é sigilosa por lei — avisar o cliente frustraria a investigação e é, em si, infração. (3) Infração. Sigilo bancário é a Lei Complementar 105/2001, e dado de operação financeira em log é vazamento, não descuido de engenharia. (4) Não, quando o tratamento se apoia em obrigação legal ou regulatória: as normas do SFN exigem guarda por prazos longos, e essa base legal prevalece sobre o pedido. (5) Para conter risco de concentração — se um único devedor pode derrubar a instituição ao quebrar, a exposição precisa ser capada. A origem é prudencial, do acordo de Basileia traduzido em normas do CMN. (6) É a pessoa física que de fato controla a empresa, mesmo através de camadas societárias. Importa porque sem ele o KYB identifica um CNPJ e não identifica ninguém.
+
+</details>
+
 ---
 
 ## 15. Conciliação, estorno, fraude e disputas
@@ -2209,7 +2970,7 @@ Instituições têm **ouvidoria obrigatória** como última instância interna, 
 
 O padrão geral:
 
-1. Receber o **extrato/arquivo da contraparte** (banco, adquirente, câmara);
+1. Receber o **extrato/arquivo da contraparte** — retorno CNAB do banco, extrato de conta, ou o **EDI** da credenciadora. *EDI* (*Electronic Data Interchange*) é o termo genérico para troca estruturada de arquivos entre empresas; no jargão de adquirência, "o EDI" é especificamente o arquivo diário de vendas, ajustes e liquidações que a credenciadora envia ao lojista;
 2. Comparar com os registros internos, casando por chave (identificador da transação, valor, data);
 3. Classificar as divergências: existe só na contraparte, existe só internamente, valores diferentes, duplicidade;
 4. Tratar cada divergência — automaticamente quando a regra permite, manualmente quando não.
@@ -2217,7 +2978,7 @@ O padrão geral:
 ```mermaid
 graph TB
     INT["Registros internos<br/>(seu ledger)"] --> CONC["Motor de conciliação"]
-    EXT["Arquivo da contraparte<br/>(retorno CNAB, extrato, EDI adquirente)"] --> CONC
+    EXT["Arquivo da contraparte<br/>(retorno CNAB, extrato, EDI da credenciadora)"] --> CONC
     CONC --> OK["Conciliado ✓"]
     CONC --> D1["Só no interno<br/>(não liquidou?)"]
     CONC --> D2["Só no externo<br/>(evento não capturado)"]
@@ -2249,7 +3010,27 @@ O princípio contábil: **você não apaga o lançamento original** — você re
 
 O **MED (Mecanismo Especial de Devolução)**, regulamentado pela **Resolução BCB nº 103/2021**, permite contestar um PIX quando há indício de **fraude, golpe ou falha operacional da instituição**.
 
-O **MED 2.0** tornou-se obrigatório para todas as instituições participantes do PIX **a partir de fevereiro de 2026**. A principal evolução é o **bloqueio em cadeia**: antes, só a primeira conta que recebia o valor era analisada; agora o rastreamento segue o dinheiro por múltiplas contas, acompanhando a tática de fraudadores que pulverizam valores. Prazos: o usuário pode contestar em até 80 dias, e a análise mais a devolução ocorrem em até 11 dias a partir da contestação.
+O **MED 2.0** foi instituído pela **Resolução BCB nº 493/2025**, publicada em 28 de agosto de 2025 — é ela, e não a 103/2021, que reescreveu o mecanismo. A adoção foi escalonada: facultativa a partir de 23 de novembro de 2025 e **obrigatória a partir de 2 de fevereiro de 2026** para participantes provedores de conta transacional e liquidantes especiais.
+
+A principal evolução é o **rastreamento em cadeia**: antes, só a primeira conta que recebia o valor era analisada; agora o rastreamento segue o dinheiro por **até cinco camadas** de contas, acompanhando a tática de fraudadores que pulverizam valores. Junto vieram o bloqueio imediato dos recursos ao registro da notificação de infração e a contestação por autoatendimento no app, sem passar por atendente.
+
+> **Cuidado com a data, se você está lendo isto em 2026.** O MED 2.0 está em produção desde 11 de maio de 2026, mas a camada operacional que identifica **em qual camada** da cadeia a notificação se refere só passa a vigorar em **26 de outubro de 2026** (IN BCB nº 767, que adiou a data originalmente prevista para agosto). Dizer que o rastreamento em cadeia está plenamente vigente desde fevereiro descreve um estado que ainda não é o atual.
+
+#### Os prazos, decompostos
+
+Material sobre MED costuma somar prazos e apresentar um número só. Para quem vai implementar SLA, temporizador ou máquina de estados, a soma é inútil — o que importa é cada etapa:
+
+| Prazo | O quê | Contado de |
+|---|---|---|
+| **80 dias corridos** | Prazo para o usuário **acionar** o MED sobre uma transação | A data da transação |
+| **Análise da notificação** | O PSP do recebedor bloqueia de imediato e analisa a notificação de infração | O registro da notificação |
+| **até 96 horas** | Efetivação da devolução **após** a aprovação | A aprovação da análise |
+| **até 90 dias** | Monitoramento da conta do recebedor para bloqueios adicionais e devoluções parciais, quando não há saldo suficiente | A transação original |
+| **80 dias** | Prazo para **contestar uma devolução já realizada** pelo MED | A devolução |
+
+**Atenção ao último item, porque ele é a origem de metade da confusão.** São dois prazos de 80 dias diferentes: um para acionar o mecanismo, outro para contestar o resultado dele. O segundo era de 30 dias e **passou para 80 a partir de 1º de setembro de 2026**. Usar "80 dias" sem dizer qual deles é torná-los intercambiáveis, e eles não são.
+
+O número que circula somado por aí — "11 dias" — é a análise mais a devolução vistas de fora, e é justamente o que seu sistema **não** pode usar. Você precisa de dois temporizadores separados: um que cobra a resposta da análise, outro que dispara a efetivação da devolução aprovada. E, para o valor exato de cada um, a fonte é o **Manual de Tempos do Pix** e o **Manual Operacional do DICT**, não a norma nem material secundário — os prazos vivem lá justamente porque são revisados com frequência. Trate-os como configuração com vigência, do mesmo jeito que os limites de valor da seção 13.2.
 
 **Limites importantes** (e que geram muito ticket de suporte mal direcionado):
 
@@ -2269,6 +3050,26 @@ Se você tira uma única lição de arquitetura desta apostila, que seja esta: *
 
 Modele estados reversíveis, guarde histórico completo e nunca destrua informação.
 
+> **Fio condutor — a Padaria do João, epílogo.** O Mercado da Esquina paga a duplicata no vencimento, com três dias de atraso. O dinheiro vai direto para o banco, que é o credor desde a antecipação — a padaria não recebe nada, porque já recebeu R$ 9.700 duas semanas antes. Na conciliação do dia, a padaria precisa casar quatro registros que nunca vão bater por valor: os R$ 10.000 do lançamento de receita (capítulo 5), os R$ 9.700 que entraram na antecipação, os R$ 10.210 que o Mercado efetivamente pagou com juros e multa, e os R$ 10.206,50 líquidos no retorno CNAB. Nenhum desses números é errado. Eles só respondem a perguntas diferentes — e um sistema que guarda um campo `valor` só consegue responder a uma delas.
+>
+> E se o Mercado tivesse contestado o pagamento, ou se o boleto tivesse sido adulterado, nada disso seria terminal. É esse o ponto do capítulo.
+
+### Checkpoint
+
+1. Cancelamento, estorno e devolução: qual a diferença entre os três?
+2. Por que não se apaga o lançamento original ao reverter uma operação?
+3. Quais são os dois prazos de 80 dias do MED, e por que confundi-los é grave?
+4. O MED cobre PIX enviado para a chave errada por engano do próprio usuário?
+5. Qual norma reescreveu o MED, e desde quando ele é obrigatório?
+6. O que chargeback, MED e estorno de boleto têm em comum, do ponto de vista de arquitetura?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Cancelamento anula antes da liquidação — a operação não chega a acontecer; estorno é um lançamento contrário que anula o efeito de algo já liquidado; devolução é uma transação nova, em sentido oposto, com identidade própria. (2) Porque o histórico precisa mostrar que algo aconteceu e depois foi revertido — apagar destrói a auditabilidade e quebra o fechamento de períodos já encerrados. (3) Um é o prazo para acionar o MED sobre a transação (80 dias corridos da transação); o outro é o prazo para contestar uma devolução já realizada, que era de 30 dias e passou a 80 em 1º/09/2026. Confundi-los faz o timer disparar sobre o evento errado. (4) Não — erro de digitação do próprio usuário está fora do escopo, assim como arrependimento de compra e desacordo comercial. (5) A Resolução BCB nº 493/2025; obrigatório desde 2 de fevereiro de 2026, com a camada operacional de identificação de camada vigorando a partir de 26 de outubro de 2026. (6) Todos são a mesma coisa: uma transação liquidada e tida como final sendo revertida depois, por decisão de um terceiro, fora do controle do seu sistema. É o padrão *saga* com a compensação chegando semanas depois.
+
+</details>
+
 ---
 
 ## 16. Open Finance
@@ -2277,21 +3078,97 @@ O Open Finance Brasil é hoje um dos maiores ecossistemas do mundo em volume: **
 
 > **Analogia:** é OAuth aplicado a dinheiro. O cliente autoriza um app terceiro a acessar dados que estão em outro provedor, com escopo definido ("só extrato", "só iniciar pagamento") e prazo de validade. Ninguém entrega senha do banco a ninguém, e o consentimento pode ser revogado a qualquer momento — exatamente o modelo de token que você já conhece.
 
-Peças relevantes:
+### Os dois papéis, e por que eles mudam tudo
 
-- **Consentimento** — cliente autoriza explicitamente o compartilhamento, válido por até 12 meses, renovável.
+Antes das peças, a distinção que organiza o resto: toda instituição no Open Finance é **transmissora**, **receptora** ou as duas.
+
+| Papel | O que faz | O que isso exige do seu sistema |
+|---|---|---|
+| **Transmissora** (detentora) | Entrega os dados do cliente a quem ele autorizou | APIs de leitura padronizadas, com SLA e disponibilidade auditados pelo Bacen. Você vira **provedor**, e a carga vem de fora |
+| **Receptora** | Consome dados de outras instituições | Cliente HTTP resiliente contra centenas de contrapartes, cada uma com sua janela de indisponibilidade |
+| **Iniciadora (ITP)** | Inicia pagamento em nome do cliente | Não custodia dinheiro: envia a ordem à detentora, que executa |
+
+Ser transmissora é a parte que surpreende. As métricas de disponibilidade e tempo de resposta das suas APIs são **reportadas e comparadas publicamente**, e degradação vira apontamento regulatório. Não é integração de melhor esforço.
+
+### Ciclo de vida do consentimento
+
+O consentimento é o objeto central do Open Finance e é uma máquina de estados com prazos, não um booleano:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Criado: receptora solicita<br/>escopo e prazo
+    Criado --> Autorizado: cliente autentica<br/>na detentora
+    Criado --> Rejeitado: cliente recusa
+    Criado --> Expirado: não autenticou<br/>na janela
+
+    Autorizado --> Consumindo: receptora acessa<br/>dentro do escopo
+    Consumindo --> Revogado: cliente revoga<br/>(em qualquer das duas pontas)
+    Consumindo --> Expirado: fim do prazo
+
+    Rejeitado --> [*]
+    Revogado --> [*]
+    Expirado --> [*]
+```
+
+Três coisas que decorrem disso:
+
+- **A revogação vale das duas pontas.** O cliente pode revogar no app da receptora ou no da detentora, e as duas precisam refletir a revogação. Isso significa que nenhuma das duas pode tratar o próprio banco de dados como fonte da verdade — é sincronização, não cache.
+- **Escopo é granular e vinculado.** "Dados cadastrais" e "dados transacionais de conta" são permissões distintas, e cada chamada precisa ser verificada contra o escopo concedido, não contra a existência do consentimento.
+- **Prazo é finito.** O consentimento de compartilhamento de dados vale por até 12 meses e precisa ser renovado. Produto construído em cima dele precisa de uma estratégia de renovação, ou o serviço para de funcionar sozinho na data.
+
+### As peças técnicas
+
+- **Diretório de participantes** — o registro central que diz quem é quem no ecossistema: qual instituição existe, quais papéis exerce, quais certificados são válidos e onde ficam seus endpoints. Ele é a raiz de confiança; sem consultar o diretório, você não tem como saber se a instituição do outro lado é legítima.
+- **FAPI** (*Financial-grade API*) — o perfil de segurança sobre OAuth 2.0 e OpenID Connect que o Open Finance Brasil adota. Ele endurece o OAuth que você já conhece: exige mTLS ou chaves privadas para autenticação do cliente, tokens vinculados ao certificado que os obteve (*sender-constrained*), requisição de autorização assinada e resposta assinada. Na prática, a maior parte da dificuldade de entrar no ecossistema está aqui, não nas APIs de negócio.
+- **Certificados** — dois tipos, e confundi-los custa dias: um para **transporte** (o mTLS da conexão) e outro para **assinatura** (a integridade das mensagens). Valem as mesmas regras de rotação e monitoramento do capítulo 8.
+- **Fases** — o ecossistema foi implantado em etapas: dados abertos de produtos e canais, dados cadastrais e transacionais do cliente, iniciação de pagamento, e a ampliação para investimentos, câmbio, seguros e previdência.
+
+### Iniciação de pagamento: quem fala com o SPI
+
 - **Iniciação de pagamento (payment initiation)** — uma instituição terceira pode iniciar um PIX em nome do cliente, com autorização, sem que ele saia do app do iniciador.
 - **JSR — Jornada Sem Redirecionamento** — mudança regulatória (Resolução BCB nº 406/2024) que elimina o antigo fluxo de "sair do app A, autenticar no app B, voltar para o app A"; a confirmação passa a ocorrer dentro do próprio app, via biometria ou push do banco. Tornou-se obrigatória para todos os participantes do arranjo PIX a partir de janeiro de 2026.
 - **Pix Automático via Open Finance** — portabilidade de recorrência entre bancos sem convênio bilateral.
 
+Aqui está o ponto que material sobre Open Finance erra com frequência: **o iniciador não fala com o SPI.** Ele não é participante do SPI, não tem Conta PI e não está conectado à RSFN — as três coisas que o capítulo 8 e o capítulo 10 estabeleceram como pré-requisito para liquidar PIX. O que o ITP faz é enviar o **consentimento de pagamento e a ordem** à instituição detentora da conta; é ela que emite a `pacs.008` ao SPI e responde pela liquidação.
+
 ```mermaid
-graph LR
-    CLIENTE["Cliente"] -->|Autoriza consentimento| ITP["Iniciador de Pagamento / Agregador<br/>(app terceiro, ex.: ERP, ITP)"]
-    ITP -->|"API padronizada Bacen<br/>(escopo de dados/serviços)"| BANCO_DETENTOR["Instituição detentora da conta<br/>(banco onde o dinheiro está)"]
-    BANCO_DETENTOR -->|"Confirma (JSR: sem redirecionamento)"| CLIENTE
-    ITP -->|"Inicia PIX em nome do cliente"| SPI["SPI (Bacen)"]
-    SPI --> BANCO_DETENTOR
+sequenceDiagram
+    autonumber
+    participant Cliente
+    participant ITP as Iniciador (ITP)
+    participant Detentora as Instituição detentora da conta
+    participant SPI as SPI (Bacen)
+    participant Recebedor as PSP do recebedor
+
+    Cliente->>ITP: Escolhe pagar pelo app do iniciador
+    ITP->>Detentora: Cria consentimento de pagamento
+    Detentora->>Cliente: Autenticação (JSR: sem sair do app)
+    Cliente->>Detentora: Confirma
+    ITP->>Detentora: Envia a ordem de pagamento
+    Detentora->>SPI: pacs.008 (a detentora é quem liquida)
+    SPI->>Recebedor: Liquidação entre Contas PI
+    SPI-->>Detentora: Confirmação
+    Detentora-->>ITP: Status do pagamento
+    ITP-->>Cliente: "Pago"
 ```
+
+A consequência prática: se você constrói um iniciador, **você não controla a liquidação** e não tem visibilidade direta do SPI. Seu tratamento de erro e sua conciliação são contra a detentora, e o pior estado do seu sistema é "ordem enviada, sem resposta" — que exige consulta de status, não retry cego.
+
+### Checkpoint
+
+1. O que muda para uma instituição quando ela é transmissora em vez de receptora?
+2. O consentimento é um booleano no seu banco de dados?
+3. O que o FAPI acrescenta ao OAuth 2.0 que você já conhece?
+4. Para que serve o diretório de participantes?
+5. Um iniciador de pagamento envia a `pacs.008` ao SPI?
+6. O que acontece com um produto construído sobre consentimento quando passam 12 meses?
+
+<details>
+<summary>Respostas</summary>
+
+(1) Ela vira provedora: precisa expor APIs padronizadas com disponibilidade e tempo de resposta auditados e comparados publicamente pelo Bacen, e a carga chega de fora, sem controle dela. (2) Não — é uma máquina de estados com escopo granular e prazo, revogável nas duas pontas, o que significa que o estado local é sincronização e não fonte da verdade. (3) mTLS ou chave privada para autenticar o cliente, tokens vinculados ao certificado que os obteve, e assinatura da requisição de autorização e da resposta. (4) É a raiz de confiança do ecossistema: diz quais instituições existem, que papéis exercem, quais certificados são válidos e onde ficam seus endpoints. (5) Não. Ele envia o consentimento e a ordem à instituição detentora da conta, que é participante do SPI e emite a `pacs.008`. O iniciador não tem Conta PI nem conexão à RSFN. (6) Ele para de funcionar, a menos que exista estratégia de renovação — o prazo do consentimento de dados é de até 12 meses.
+
+</details>
 
 ---
 
@@ -2301,6 +3178,8 @@ Juntando tudo: da tela do cliente até a conta de Reservas Bancárias no Bacen.
 
 ```mermaid
 graph TB
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
+
     subgraph L1["Camada de aplicação (o que você constrói)"]
         APP["App / core bancário / sistema de cobrança"]
     end
@@ -2311,16 +3190,20 @@ graph TB
         OF["Open Finance — consentimento e dados"]
     end
 
-    subgraph L3["Camada de compensação"]
-        SPI2["SPI (PIX)"]
-        NUCLEA2["Núclea (boleto, cartão)"]
-        B32["B3 (mercado de capitais)"]
+    subgraph L3["Camada de compensação (câmaras)"]
+        NUCLEA2["Núclea — boleto, TED, cartão"]
+        B32["B3 — mercado de capitais"]
     end
 
     subgraph L4["Camada de liquidação final — Bacen"]
         STR2["STR — LBTR"]
+        SPI2["SPI — LBTR 24/7 (PIX)"]
         SELIC2["SELIC — títulos públicos"]
-        RESERVA["Conta de Reservas Bancárias"]
+    end
+
+    subgraph L5["Contas do participante no Bacen"]
+        RESERVA["Reservas Bancárias"]
+        CONTAPI2["Conta PI"]
     end
 
     APP --> DICT2
@@ -2330,16 +3213,37 @@ graph TB
     APP --> NUCLEA2
     APP --> B32
 
-    SPI2 --> STR2
     NUCLEA2 --> STR2
     B32 --> STR2
     SELIC2 --> RESERVA
     STR2 --> RESERVA
+    SPI2 --> CONTAPI2
+    RESERVA -->|"pré-financiamento via STR"| CONTAPI2
 
-    style RESERVA fill:#1a1a1a,color:#fff,stroke:#f5a623,stroke-width:2px
+    class RESERVA,CONTAPI2 destaque
 ```
 
-**Takeaway de arquitetura:** não importa o trilho (PIX, TED, boleto, ação, título público) — todos convergem para o mesmo ponto final: uma movimentação na **conta de Reservas Bancárias** do participante no Bacen. Isso é o que garante baixo risco sistêmico no Brasil (o Bacen frequentemente é citado como um dos sistemas de liquidação mais seguros do mundo) e é também por isso que **liquidação é sempre a etapa mais lenta e mais auditável** do seu fluxo — vale desenhar reconciliação em cima dela, não em cima da "confirmação" otimista da camada de compensação.
+**Takeaway de arquitetura:** não importa o trilho — PIX, TED, boleto, cartão, ação, título público —, todos convergem para **uma conta do participante no Bacen**. Para os trilhos tradicionais, é a conta de **Reservas Bancárias**, via STR; para o PIX, é a **Conta PI**, via SPI — e a Conta PI é, por sua vez, pré-financiada a partir de Reservas. A convergência existe; ela só tem duas portas, não uma.
+
+Isso é o que garante baixo risco sistêmico no Brasil (o Bacen frequentemente é citado como um dos sistemas de liquidação mais seguros do mundo) e é também por isso que **liquidação é sempre a etapa mais lenta e mais auditável** do seu fluxo — vale desenhar reconciliação em cima dela, não em cima da "confirmação" otimista da camada de compensação.
+
+### Checkpoint final
+
+Se você conseguir responder a estas seis sem voltar ao texto, a apostila cumpriu o que prometeu:
+
+1. Um pagamento chega ao seu sistema. Quais são as três camadas que ele atravessa até virar dinheiro definitivo, e qual delas é irrevogável?
+2. Por que "pago" não pode ser um estado terminal no seu modelo — e cite três mecanismos diferentes que provam isso.
+3. Seu ledger tem uma coluna `saldo`. Que três capacidades você perdeu?
+4. Um cliente pergunta por que o título dele não baixou. Que dado bruto você precisa ter guardado para responder em minutos?
+5. Qual a diferença entre compensação e liquidação, e por que dar baixa definitiva na primeira é erro de arquitetura?
+6. Cite três coisas do seu backlog que parecem regra arbitrária de negócio e cuja origem real é regulatória.
+
+<details>
+<summary>Respostas</summary>
+
+(1) A camada de aplicação (o ledger do seu banco), a camada de compensação (câmara, quando houver) e a camada de liquidação (STR ou SPI, movendo Reservas ou Conta PI). Só a última é irrevogável. (2) Porque a reversão vem de fora e depois: chargeback no cartão, MED no PIX, devolução no CNAB — e ainda a liquidação após baixa (`17`) na cobrança, que reverte no sentido contrário. (3) Auditabilidade, capacidade de reconstruir o estado em qualquer data passada, e a detecção de divergência por recálculo — que é o alarme de integridade do sistema. (4) O código de ocorrência bruto, com as dez posições inteiras, o arquivo em que ele foi reportado e a data em que você informou o cliente. Status derivado sozinho não responde. (5) Compensação apura quem deve quanto a quem; liquidação transfere de fato. Dar baixa na compensação é assumir como final um evento ainda reversível, e é o que produz título quitado sem pagamento. (6) Entre outras: limite de exposição por cliente (Basileia), assimetria de 24h para aumentar e instantâneo para reduzir limite de PIX (proteção contra coação), segregação de recursos em conta de pagamento, obrigatoriedade de CET, retenção longa de dados apesar da LGPD, registro de garantia antes do desembolso.
+
+</details>
 
 ---
 
@@ -2347,7 +3251,14 @@ graph TB
 
 | Termo | Significado | Onde você vê na prática |
 |---|---|---|
-| **Conta PI** | Conta no Bacen usada exclusivamente para liquidação do PIX | Pré-financiada, nunca negativa, remunerada pela Selic |
+| **Arranjo de pagamento** | Conjunto de regras que faz um meio de pagamento funcionar entre várias instituições | Define quem participa, prazos, responsabilidades e disputas |
+| **Instituidor do arranjo** | Quem define essas regras | Bandeira, no cartão; Bacen, no PIX |
+| **Participante direto × indireto** | Direto tem conta própria no Bacen; indireto liquida por meio de um direto | Você concilia contra quem liquida, não contra o Bacen |
+| **Banco liquidante** | Instituição com conta no Bacen que liquida em nome de terceiros | Como IPs e participantes indiretos alcançam o STR/SPI |
+| **Conta PI** | Conta no Bacen usada exclusivamente para liquidação do PIX | Pré-financiada a partir de Reservas via STR, nunca negativa, remunerada pela Selic |
+| **Conta de pagamento** | Conta mantida por IP com recursos de terceiros | Segregada, fora do balanço da IP, não lastreia crédito |
+| **IP (Instituição de Pagamento)** | Não capta depósito à vista nem empresta recursos de conta de pagamento | Regime específico do Bacen; nem toda IP tem código COMPE |
+| **Conta gráfica** | Conta interna, sem existência no sistema bancário externo | Carteiras digitais, subcontas |
 | **Redesconto intradia** | Operação compromissada sem custo para liquidez no dia | Rotina do STR, não medida de emergência |
 | **ISPB × COMPE** | Identificador de 8 dígitos no SPB × código legado de 3 dígitos | Coexistem; nem toda IP tem COMPE |
 | **Conta contábil** | Categoria classificatória da instituição (≠ conta do cliente) | Plano de contas, natureza devedora/credora |
@@ -2361,7 +3272,7 @@ graph TB
 | **Emissor / Credenciadora / Bandeira** | Papéis do arranjo de cartões | Autorização, captura, liquidação |
 | **MDR / Intercâmbio** | Taxa paga pelo lojista / fatia repassada ao emissor | Precificação de adquirência |
 | **Chargeback** | Contestação de compra no cartão | Transação liquidada pode ser revertida |
-| **MED** | Mecanismo Especial de Devolução do PIX | Res. BCB 103/2021; MED 2.0 obrigatório desde fev/2026 |
+| **MED** | Mecanismo Especial de Devolução do PIX | Res. BCB 103/2021, reescrito pela Res. BCB 493/2025; MED 2.0 obrigatório desde 02/02/2026 |
 | **KYC / KYB** | Identificação de cliente PF / PJ | Onboarding, listas de sanções, PEP |
 | **PLD/FT** | Prevenção à lavagem de dinheiro e financiamento ao terrorismo | Monitoramento, alertas, comunicação ao COAF |
 | **COAF** | Órgão que recebe comunicações de operações suspeitas | Comunicação sigilosa, sem avisar o cliente |
@@ -2431,7 +3342,25 @@ graph TB
 | **Cessão** | Transferência de titularidade do recebível | Diferente de gravame |
 | **Desconstituição** | Baixa do gravame na registradora | Exige comando; não acontece sozinha |
 | **Duplicata** | Título de crédito sacado sobre uma venda/serviço a prazo | Lastro de operações de antecipação de recebíveis |
-| **Sacado** | O comprador/devedor da duplicata | Quem paga o título no vencimento |
+| **Sacado** | O devedor do título — quem paga no vencimento | "Pagador" é o mesmo papel no vocabulário de arranjo de pagamento |
+| **Aceite** | Manifestação do sacado reconhecendo a duplicata | 10 dias do art. 7º da Lei 5.474/68; o silêncio gera aceite presumido |
+| **Protesto** | Registro formal da dívida em cartório | Dá publicidade legal e reforça o título para execução |
+| **Negativação** | Inclusão do devedor em cadastro de inadimplentes | Restringe crédito no mercado inteiro; distinta de protesto |
+| **Espécie do título** | O que originou a cobrança (DM, DS, NP…) | Campo do CNAB com efeito jurídico no protesto |
+| **Régua de cobrança** | Sequência escalonada de ações por faixa de atraso | Lembrete → notificação → negativação → protesto → judicial |
+| **Endosso** | Transferência da titularidade de um título de crédito | O que permite a um recebível circular |
+| **Resilição × rescisão** | Encerramento por vontade das partes × por inadimplemento | Registradoras usam o primeiro; consequências são diferentes |
+| **Descasamento de prazo** | Captar curto e emprestar longo | Função econômica do banco e origem do risco de liquidez |
+| **Beneficiário final** | Pessoa física que de fato controla uma empresa | Exigência de KYB, mesmo através de camadas societárias |
+| **Registrato** | Serviço do Bacen com o extrato de crédito do próprio cliente | Acesso por gov.br; histórico de 5 anos |
+| **Convênio** | Código do contrato entre empresa e banco para um produto | Validado no header do CNAB; errado derruba o arquivo |
+| **Alçada** | Limite de valor até o qual alguém pode aprovar sozinho | Por faixa, tipo de operação e perfil |
+| **TXID** | Identificador da cobrança PIX, definido pelo recebedor | Até 35 posições no PIX; 30 dentro do CNAB |
+| **EDI** | Troca estruturada de arquivos entre empresas | Em adquirência, o arquivo diário da credenciadora |
+| **PR (Patrimônio de Referência)** | Base de capital regulatório da instituição | O Nível I é o capital de melhor qualidade |
+| **Fator de vencimento** | Dias desde 07/10/1997, em 4 posições do código de barras | Voltou a 1000 em 22/02/2025 — trate como contador circular |
+| **Nosso número × seu número** | Identificador do título no banco × na sua empresa | Correlacione pelo seu, que existe mesmo se o registro for rejeitado |
+| **CDI** | Taxa média dos empréstimos de um dia entre bancos | "% do CDI" e "CDI + spread" não são a mesma conta |
 | **Duplicata escritural** | Duplicata registrada 100% eletronicamente | Lei 13.775/18, entidades escrituradoras autorizadas pelo Bacen |
 
 ---
@@ -2441,14 +3370,16 @@ graph TB
 - Banco Central do Brasil — Sistema de Pagamentos Brasileiro: bcb.gov.br
 - Banco Central do Brasil — repositórios oficiais da API PIX: `github.com/bacen/pix-api`, `github.com/bacen/pix-dict-api`, `github.com/bacen/pix-dict-quickstart`
 - Circular BCB nº 1.273/1987 e Manual do COSIF (bcb.gov.br/aplica/cosif)
-- Resolução BCB nº 195/2022 (Regulamento do SPI e da Conta PI) e Resolução BCB nº 175/2021 (redesconto no SPI)
+- Resolução BCB nº 195/2022 (Regulamento do SPI e da Conta PI); Resolução BCB nº 20/2020, revogada pela Resolução BCB nº 175/2021 (redesconto no STR e no SPI); Resolução BCB nº 105/2021 (Regulamento do STR)
+- Banco Central do Brasil — Catálogo de Serviços do SFN e Manual Operacional do DICT
 - Comunicado Febraban sobre a descontinuação de DOC e TEC (fev/2024)
 - Resolução CMN nº 4.966/2021 e Resolução BCB nº 352/2023 (perda esperada / IFRS 9, vigência jan/2025)
-- Resolução BCB nº 103/2021 (MED — Mecanismo Especial de Devolução do PIX) e regras do MED 2.0 (fev/2026)
+- Resolução BCB nº 103/2021 (MED — Mecanismo Especial de Devolução do PIX), reescrita pela **Resolução BCB nº 493/2025** (MED 2.0, vigência obrigatória em 02/02/2026); Instrução Normativa BCB nº 766/2026 e Instrução Normativa BCB nº 767/2026 (rastreamento em camadas, vigência em 26/10/2026)
 - Lei Complementar nº 105/2001 (sigilo bancário)
 - Lei nº 13.709/2018 (LGPD)
 - Resolução CMN nº 4.571/2017 (SCR)
 - Resolução BCB nº 264/2022 (registro de recebíveis de arranjo de pagamento), alterada pela Resolução BCB nº 514/2025, e Convenção entre Entidades Registradoras
+- Resolução BCB nº 150/2021 (arranjos de pagamento e liquidação centralizada), alterada pela Resolução BCB nº 522/2025
 - Resolução CMN nº 4.734/2019 (recebíveis de arranjo de pagamento)
 - Resolução CMN nº 4.677/2018 (limites de exposição por cliente) e Resolução CMN nº 5.076/2023 (IPs tipo 3)
 - Instrução Normativa BCB nº 512/2024, alterada pela IN BCB nº 746/2026 (limites de valor no PIX)
@@ -2458,8 +3389,9 @@ graph TB
 - Resolução BCB nº 406/2024 (Jornada Sem Redirecionamento)
 - Open Finance Brasil — Atos Normativos: openfinancebrasil.org.br
 - Wikipédia — Sistema de Pagamentos Brasileiro
-- Febraban — padrão CNAB 240/400
+- Febraban — padrão CNAB 240/400 (leiautes de cobrança e de pagamento) e especificação do código de barras e da linha digitável do boleto
+- Núclea — regulamentos operacionais do SILOC e do SITRAF
 
 ---
 
-*Apostila gerada com pesquisa web em agosto de 2026 — as regras do Bacen mudam com frequência (novas resoluções, novos manuais de Open Finance); vale sempre checar `bcb.gov.br` para a versão vigente antes de implementar em produção.*
+*Apostila com data de agosto de 2026. As regras do Bacen mudam com frequência — novas resoluções, novas instruções normativas, novos manuais de Open Finance e do DICT —, e alguns dos prazos citados aqui (MED, rastreamento em camadas, limites de PIX) têm vigência escalonada ainda em curso. Confira `bcb.gov.br` para a versão vigente antes de implementar em produção.*
