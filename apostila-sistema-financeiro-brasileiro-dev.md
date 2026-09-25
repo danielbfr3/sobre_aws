@@ -29,7 +29,7 @@
     - [11.5 Carteiras de cobrança](#115-carteiras-de-cobrança)
     - [11.6 CNAB de cobrança em detalhe](#116-cnab-de-cobrança-em-detalhe)
     - [11.7 CNAB de pagamento em detalhe](#117-cnab-de-pagamento-em-detalhe)
-    - [11.8 CNAB × APIs modernas](#118-cnab-×-apis-modernas)
+    - [11.8 CNAB × APIs modernas](#118-cnab--apis-modernas)
 12. [Cartões: o arranjo de quatro partes](#12-cartões-o-arranjo-de-quatro-partes)
 
 **Parte IV — Crédito e conformidade**
@@ -58,6 +58,37 @@ Quando você trabalha em backend de banco — seja num core bancário, num siste
 - passa por uma **câmara** ou por um sistema de liquidação — entidades que centralizam e organizam as trocas financeiras entre instituições. As quatro que você vai encontrar o tempo todo: o **STR** (Sistema de Transferência de Reservas, do Bacen, onde a liquidação interbancária se torna definitiva), o **SPI** (Sistema de Pagamentos Instantâneos, o motor do PIX, também do Bacen), a **Núclea** (câmara privada, ex-CIP, que compensa boleto, TED e cartão) e a **B3** (bolsa e câmara do mercado de capitais). O capítulo 9 detalha cada uma;
 - é liquidada em **moeda de banco central**, numa conta que a instituição mantém no Bacen;
 - gera (ou consome) um **registro regulatório** (SCR, DICT, Open Finance) que outras instituições e o próprio Bacen também enxergam.
+
+### O mapa do território
+
+Essas três coisas não são uma lista solta — são **camadas**, e elas têm ordem. O desenho abaixo é o mapa do território inteiro desta apostila:
+
+```mermaid
+graph TB
+    classDef destaque fill:#f5a623,stroke:#b36d00,color:#1a1a1a,stroke-width:2px
+
+    APP["① O que você constrói<br/>app, core bancário, cobrança, motor de crédito"]
+    DADOS["② Registros regulatórios<br/>de quem é a chave, quanto o cliente já devia"]
+    COMP["③ Compensação<br/>apura quem deve quanto a quem<br/>— ainda reversível"]
+    LIQ["④ Liquidação<br/>o dinheiro muda de mãos<br/>— irreversível"]
+    CONTA["⑤ Conta do participante no Bacen<br/>onde toda obrigação entre bancos termina"]
+
+    APP -->|"consulta e alimenta"| DADOS
+    APP -->|"boleto, cartão"| COMP
+    COMP --> LIQ
+    APP -.->|"PIX: direto, sem câmara"| LIQ
+    LIQ --> CONTA
+
+    class LIQ destaque
+```
+
+Três leituras dele, que é tudo que você precisa levar agora:
+
+1. **Você mora na camada ①.** Todo o resto é infraestrutura que o seu sistema consome, não controla e precisa conciliar contra. Boa parte dos bugs desse domínio nasce de tratar as camadas ② a ⑤ como se fossem chamadas de função locais, confiáveis e síncronas.
+2. **A fronteira entre ③ e ④ é a linha mais importante do desenho.** Compensação apura obrigação e ainda pode ser desfeita; liquidação move dinheiro e não volta. O capítulo 3 chama essa distinção de a mais importante da apostila, e os capítulos 11 e 15 mostram, em código e em incidente, o preço de ignorá-la.
+3. **Todo trilho termina em ⑤.** PIX, TED, boleto, cartão, ação, título público — não importa o caminho, uma obrigação entre instituições só morre numa conta que o participante mantém no Bacen. É por isso que a liquidação é sempre a etapa mais lenta e mais auditável do seu fluxo, e é sobre ela que se desenha reconciliação.
+
+**Nenhum nome do diagrama precisa fazer sentido ainda**, e nem todo trilho segue o caminho óbvio — a TED, por exemplo, tem dois caminhos possíveis até ④, o que o capítulo 9 destrincha. O capítulo 9 nomeia as câmaras, os capítulos 10 a 12 abrem cada trilho por dentro, e o **capítulo 17 volta a este mesmo mapa com todas as caixas preenchidas**. Se ele parecer vago agora e óbvio no fim, a apostila fez o trabalho dela.
 
 Esta apostila cobre os fundamentos econômicos e contábeis, a estrutura institucional, os trilhos de pagamento (PIX, boleto/CNAB, TED, cartões), a área de crédito e as obrigações de conformidade — sempre com o olhar de "o que isso significa para o meu sistema".
 
@@ -145,7 +176,7 @@ Uma venda. Só que ela reaparece em sete lugares, e cada capítulo enxerga uma c
 | Camada | Onde |
 |---|---|
 | O lançamento contábil da venda | Capítulo 5 |
-| O centavo que sobra ao parcelar | Capítulo 6 |
+| O centavo que aparece no arredondamento dos juros | Capítulo 6 |
 | A duplicata sacada contra o Mercado | Seção 13.5 |
 | O boleto emitido e a remessa CNAB | Seções 11.2 a 11.6 |
 | A antecipação do recebível no banco | Seções 11.5 e 13.6 |
@@ -909,6 +940,15 @@ Limites clássicos aplicados a boletos e crédito ao consumidor:
 
 O cálculo `pro rata die` exige, de novo, **calendário de dias úteis/corridos correto**. Contar dias com aritmética ingênua de `datetime` é uma das causas mais comuns de divergência de centavos em cobrança.
 
+> **Fio condutor — a Padaria do João.** O Mercado da Esquina atrasa três dias o pagamento dos R$ 10.000. O contrato prevê multa de 2% e juros de mora de 1% ao mês, *pro rata die*. A multa é exata: **R$ 200,00**. Os juros não são: 1% de R$ 10.000 dá R$ 100,00 por mês, que dividido por 30 dá **R$ 3,3333… por dia** — e aí a ordem das operações vira dinheiro.
+>
+> | Ordem das operações | Conta | Juros |
+> |---|---|---|
+> | Arredonda por dia, depois soma | 3,33 × 3 | R$ 9,99 |
+> | Soma primeiro, arredonda no fim | 3,3333… × 3 | R$ 10,00 |
+>
+> Um centavo de diferença, e **nenhuma das duas está errada** — quem decide é o contrato, não o desenvolvedor. Esta apostila adota a segunda, e é por isso que o retorno CNAB da seção 11.6 traz juros e multa somados de **R$ 210,00**, e não R$ 209,99. Sozinho o centavo é invisível; multiplicado por uma carteira de cem mil boletos, ele é a divergência que o time financeiro vai pedir para você explicar.
+
 ### Datas: o inimigo silencioso
 
 - **Fuso horário** — armazene em UTC, exiba em `America/Sao_Paulo`. O horário de corte bancário é local.
@@ -1105,7 +1145,7 @@ O SPB é o guarda-chuva que engloba **todas** as infraestruturas de mercado fina
 
 - **STR (Sistema de Transferência de Reservas)** — operado pelo próprio Bacen. É onde ocorre a **Liquidação Bruta em Tempo Real (LBTR)**: cada transação é liquidada uma a uma, em moeda de banco central, sem esperar lote. É o "coração" do SPB — o saldo final entre bancos nos trilhos tradicionais passa por aqui, nas contas de Reservas Bancárias que cada banco mantém no Bacen.
 - **SPI (Sistema de Pagamentos Instantâneos)** — também operado pelo Bacen, também **LBTR**, mas dedicado ao PIX e rodando 24/7/365. Liquida entre **Contas PI**, não entre Reservas. É motor de **liquidação**, não câmara de compensação — o capítulo 10 detalha.
-- **CIP / Núclea** — câmara privada (associação sem fins lucrativos, hoje rebatizada "Núclea") responsável por **compensar** grande parte do varejo, por meio de dois sistemas que vale nomear: o **SILOC**, que compensa boletos, DOC e TEC em modelo LDL com netting multilateral, e o **SITRAF**, que processa TED dentro do seu horário de funcionamento. No PIX, a Núclea presta serviços de conectividade e tecnologia às instituições participantes — não opera o motor de liquidação. Compensação ≠ liquidação: a Núclea apura o líquido devido entre bancos; quem efetivamente move o dinheiro entre as contas de reserva é o STR.
+- **CIP / Núclea** — câmara privada (associação sem fins lucrativos, hoje rebatizada "Núclea") responsável por **compensar** grande parte do varejo, por meio de dois sistemas que vale nomear: o **SILOC**, que compensa boletos, transações de cartões (crédito, débito e antecipação) e operações de caixas eletrônicos em modelo LDL com netting multilateral — historicamente também DOC e TEC, descontinuados em 2024, como a seção 11.1 detalha, e o **SITRAF**, que processa TED dentro do seu horário de funcionamento. No PIX, a Núclea presta serviços de conectividade e tecnologia às instituições participantes — não opera o motor de liquidação. Compensação ≠ liquidação: a Núclea apura o líquido devido entre bancos; quem efetivamente move o dinheiro entre as contas de reserva é o STR.
 - **SELIC** — sistema do Bacen para custódia e liquidação de **títulos públicos federais**.
 - **B3** — liquida ações, derivativos e renda fixa privada.
 
@@ -1124,7 +1164,7 @@ graph LR
     end
 
     subgraph Compensacao["Compensação — apuração do saldo líquido (câmaras)"]
-        NUCLEA["Núclea (ex-CIP)<br/>SILOC: boleto, DOC, TEC<br/>SITRAF: TED"]
+        NUCLEA["Núclea (ex-CIP)<br/>SILOC: boleto, cartão,<br/>caixas eletrônicos<br/>SITRAF: TED"]
         B3C["B3<br/>ações, derivativos, renda fixa privada"]
     end
 
@@ -2724,6 +2764,10 @@ A duplicata é o **título de crédito** que dá lastro a boa parte das operaç�
 
 Base legal: **Lei nº 5.474/68** (Lei das Duplicatas Mercantis) e, mais recentemente, **Lei nº 13.775/2018** (duplicata escritural).
 
+> **Fio condutor — a Padaria do João.** A venda ao Mercado da Esquina é exatamente a hipótese da lei: mercadoria, entre empresas domiciliadas no Brasil, a prazo de 30 dias. A padaria emite a fatura e **saca** contra o Mercado uma duplicata mercantil de R$ 10.000 — espécie **DM**, o mesmo código que vai no segmento P da remessa, na seção 11.6. O Mercado tem **10 dias** da apresentação para devolver a duplicata assinada ou recusá-la por escrito; não fazendo nada, e havendo comprovante da entrega dos pães, o aceite é presumido.
+>
+> Repare no que a padaria ganha nesse momento. Antes, ela tinha uma venda a prazo — uma promessa comercial, cobrável como qualquer contrato. Agora ela tem um **título executivo e endossável**, e é essa qualidade, não a nota fiscal, que permite levá-lo ao banco duas semanas depois para antecipar, como acontece na seção 13.6. A duplicata é o que transforma "o Mercado me deve" em um ativo que circula.
+
 **Tipos de duplicata:**
 
 | Critério | Tipo | Descrição |
@@ -3010,11 +3054,11 @@ O princípio contábil: **você não apaga o lançamento original** — você re
 
 O **MED (Mecanismo Especial de Devolução)**, regulamentado pela **Resolução BCB nº 103/2021**, permite contestar um PIX quando há indício de **fraude, golpe ou falha operacional da instituição**.
 
-O **MED 2.0** foi instituído pela **Resolução BCB nº 493/2025**, publicada em 28 de agosto de 2025 — é ela, e não a 103/2021, que reescreveu o mecanismo. A adoção foi escalonada: facultativa a partir de 23 de novembro de 2025 e **obrigatória a partir de 2 de fevereiro de 2026** para participantes provedores de conta transacional e liquidantes especiais.
+O **MED 2.0** foi instituído pela **Resolução BCB nº 493/2025**, publicada em 28 de agosto de 2025 — é ela, e não a 103/2021, que reescreveu o mecanismo. A adoção foi escalonada: facultativa a partir de 23 de novembro de 2025 e **obrigatória a partir de 2 de fevereiro de 2026** para participantes provedores de conta transacional e liquidantes especiais — com um período de adequação técnica que se estendeu até maio de 2026.
 
 A principal evolução é o **rastreamento em cadeia**: antes, só a primeira conta que recebia o valor era analisada; agora o rastreamento segue o dinheiro por **até cinco camadas** de contas, acompanhando a tática de fraudadores que pulverizam valores. Junto vieram o bloqueio imediato dos recursos ao registro da notificação de infração e a contestação por autoatendimento no app, sem passar por atendente.
 
-> **Cuidado com a data, se você está lendo isto em 2026.** O MED 2.0 está em produção desde 11 de maio de 2026, mas a camada operacional que identifica **em qual camada** da cadeia a notificação se refere só passa a vigorar em **26 de outubro de 2026** (IN BCB nº 767, que adiou a data originalmente prevista para agosto). Dizer que o rastreamento em cadeia está plenamente vigente desde fevereiro descreve um estado que ainda não é o atual.
+> **Cuidado com a data, se você está lendo isto em 2026.** O MED 2.0 é obrigatório desde 2 de fevereiro de 2026, e a fiscalização efetiva do Bacen começou ao fim do período de adequação, em 11 de maio de 2026. Mas a camada operacional que identifica **em qual camada** da cadeia a notificação se refere só passa a vigorar em **26 de outubro de 2026** (IN BCB nº 767, que adiou a data originalmente prevista para agosto). Dizer que o rastreamento em cadeia está plenamente vigente desde fevereiro descreve um estado que ainda não é o atual.
 
 #### Os prazos, decompostos
 
@@ -3074,7 +3118,7 @@ Modele estados reversíveis, guarde histórico completo e nunca destrua informa�
 
 ## 16. Open Finance
 
-O Open Finance Brasil é hoje um dos maiores ecossistemas do mundo em volume: **mais de 800 instituições participantes**, dezenas de milhões de consentimentos ativos e bilhões de chamadas de API por semana entre instituições (números de 2026). Para o dev, ele resolve um problema concreto: antes, cada banco tinha API própria, onboarding próprio e credenciais próprias. O Open Finance padroniza **compartilhamento de dados e iniciação de pagamento** sob regras comuns do Bacen.
+O Open Finance Brasil é hoje um dos maiores ecossistemas do mundo em volume: **quase 800 instituições participantes**, mais de 200 milhões de consentimentos ativos e cerca de 7 bilhões de chamadas de API por semana entre instituições (números de meados de 2026). Para o dev, ele resolve um problema concreto: antes, cada banco tinha API própria, onboarding próprio e credenciais próprias. O Open Finance padroniza **compartilhamento de dados e iniciação de pagamento** sob regras comuns do Bacen.
 
 > **Analogia:** é OAuth aplicado a dinheiro. O cliente autoriza um app terceiro a acessar dados que estão em outro provedor, com escopo definido ("só extrato", "só iniciar pagamento") e prazo de validade. Ninguém entrega senha do banco a ninguém, e o consentimento pode ser revogado a qualquer momento — exatamente o modelo de token que você já conhece.
 
@@ -3174,7 +3218,7 @@ A consequência prática: se você constrói um iniciador, **você não controla
 
 ## 17. Visão consolidada
 
-Juntando tudo: da tela do cliente até a conta de Reservas Bancárias no Bacen.
+Juntando tudo: da tela do cliente até a conta do participante no Bacen. **É o mapa do capítulo 1, agora com cada caixa preenchida** — as câmaras têm nome, os trilhos têm leiaute e os registros regulatórios têm API. Se o desenho de lá parecia abstrato e este parece óbvio, era exatamente esse o percurso.
 
 ```mermaid
 graph TB
@@ -3305,7 +3349,7 @@ Se você conseguir responder a estas seis sem voltar ao texto, a apostila cumpri
 | **STR** | Sistema de Transferência de Reservas | Liquidação final, LBTR, contas de reserva |
 | **SPI** | Sistema de Pagamentos Instantâneos | Motor de liquidação do PIX |
 | **DICT** | Diretório de Identificadores de Contas Transacionais | Resolve chave PIX → conta/ISPB |
-| **CIP / Núclea** | Câmara de compensação privada | Boleto, cartão, parte do PIX |
+| **CIP / Núclea** | Câmara de compensação privada | Boleto e cartão (SILOC), TED (SITRAF); no PIX presta conectividade, não liquida |
 | **SELIC** | Sistema de custódia/liquidação de títulos públicos | Não confundir com a taxa Selic |
 | **SCR** | Sistema de Informações de Crédito | Histórico de crédito, base de decisão |
 | **Carteira de cobrança** | Contrato que define o papel do banco sobre os títulos | Campo obrigatório no CNAB; código varia por banco |
