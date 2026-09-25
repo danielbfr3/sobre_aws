@@ -1,7 +1,7 @@
 // Diagnostico da cadeia de credenciais - Go / aws-sdk-go-v2.
 //
-// O equivalente do examples/dotnet-credenciais do guia 03, em Go.
-// Responde duas perguntas, nesta ordem:
+// O equivalente, em Go, do examples/multilinguagem/dotnet/Diagnostico.cs do
+// guia 03. Responde duas perguntas, nesta ordem:
 //
 //  1. QUAL PROVEDOR DA CADEIA VENCEU?
 //
@@ -80,10 +80,18 @@ func main() {
 	}
 
 	// O bug do guia 03 §2, detectado antes de qualquer chamada.
+	//
+	// ATENCAO ao texto: no aws-sdk-go-v2 a variavel de ambiente vence mesmo
+	// (resolveCredentialChain testa envConfig.Credentials.HasKeys() ANTES de
+	// WebIdentityTokenFilePath), e por isso a afirmacao abaixo e categorica.
+	// NAO copie esta mensagem para o Diagnostico.cs: no AWS SDK for .NET a
+	// ordem e a INVERSA e o IRSA vence. Guia 07, secao 2.
 	if presentes["AWS_ACCESS_KEY_ID"] != "" && presentes["AWS_ROLE_ARN"] != "" {
 		fmt.Println()
 		fmt.Println("  (!) AWS_ACCESS_KEY_ID e AWS_ROLE_ARN presentes ao mesmo tempo.")
-		fmt.Println("      Variavel de ambiente vence IRSA na cadeia. O IRSA esta sendo IGNORADO.")
+		fmt.Println("      No aws-sdk-go-v2 a variavel de ambiente vence o web identity,")
+		fmt.Println("      entao o IRSA esta sendo IGNORADO aqui.")
+		fmt.Println("      (No .NET seria o contrario - veja o guia 07 secao 2.)")
 	}
 
 	// -----------------------------------------------------------------------

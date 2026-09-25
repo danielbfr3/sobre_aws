@@ -1,0 +1,266 @@
+# Os workers no EKS, com IRSA.
+#
+# Este arquivo e o exercicio de leitura da etapa 12 do ROTEIRO. Para CADA
+# worker, tres coisas precisam se encaixar - e duas delas estao aqui:
+#
+#     Deployment  --serviceAccountName-->  ServiceAccount
+#     ServiceAccount  --annotation role-arn-->  role na AWS
+#     trust policy da role  --claim :sub-->  de volta ao ServiceAccount
+#
+# O terceiro elo mora em infra/iam/trust-policy-consumer-*.json. Se qualquer um
+# dos tres nao bater, o AssumeRoleWithWebIdentity falha - e esse e o
+# comportamento desejado: e o que impede um servico de usar as permissoes de
+# outro (guia 01, secao 5).
+#
+# APLIQUE O 02-volume.yaml PRIMEIRO. A numeracao nao e a ordem.
+#
+# Os tres consumers rodam a MESMA imagem aqui. O que difere e o QUEUE_URL e o
+# ServiceAccount - e e o ServiceAccount que determina o que cada um consegue
+# fazer de fato. (Localmente eles rodam tres imagens, uma por linguagem; e o
+# assunto do capitulo 07 e nao muda nada desta pagina.)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cash
+---
+# ---------------------------------------------------------------------------
+# ServiceAccounts - UM POR WORKER.
+#
+# A anotacao e a unica coisa que liga o Kubernetes a AWS. O webhook de
+# admissao do EKS le ela na CRIACAO DO POD e injeta AWS_ROLE_ARN e
+# AWS_WEB_IDENTITY_TOKEN_FILE no container.
+#
+# "na criacao do pod" e literal: anotar um SA cujos pods ja estao no ar nao
+# faz nada. Precisa de `kubectl rollout restart`. E a causa numero 3 da lista
+# de debug do guia 01, secao 10.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-consumer-registro
+  namespace: cash
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asa-dev-cash-cobranca-consumer-registro
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-consumer-baixa
+  namespace: cash
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asa-dev-cash-cobranca-consumer-baixa
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-consumer-rejeicao
+  namespace: cash
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asa-dev-cash-cobranca-consumer-rejeicao
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-publisher
+  namespace: cash
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/asa-dev-cash-cobranca-publisher
+---
+# ---------------------------------------------------------------------------
+# consumer-registro
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-registro
+  namespace: cash
+  labels: { app: consumer-registro }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: consumer-registro }
+  template:
+    metadata:
+      labels: { app: consumer-registro }
+    spec:
+      # ELO 1 dos tres da etapa 12. Trocar este nome sem trocar a trust policy
+      # faz o pod subir normalmente e o AssumeRoleWithWebIdentity falhar.
+      serviceAccountName: sa-consumer-registro
+      securityContext:
+        # PRECISA cair na faixa gidRangeStart/End da StorageClass (02-volume).
+        # Sem isso: pod saudavel, mount feito, PermissionError no primeiro
+        # write. E POSIX, nao IAM.
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      # O Kubernetes manda SIGTERM e espera isto antes do SIGKILL. Um worker
+      # morto no meio do processamento devolve a mensagem para a fila sem
+      # necessidade - por isso o Program.cs trata SIGTERM (capitulo 07, §6).
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: consumer
+          image: 111122223333.dkr.ecr.us-east-1.amazonaws.com/cash-cobranca-consumer:1.0.0
+          env:
+            - name: WORKER
+              value: registro
+            - name: QUEUE_URL
+              value: https://sqs.us-east-1.amazonaws.com/111122223333/cobranca-registro
+            - name: DATA_PATH
+              value: /data
+            # O webhook do IRSA NAO injeta AWS_REGION. Sem esta linha, a
+            # credencial resolve e a primeira chamada estoura com erro de
+            # regiao - que parece problema de IAM e nao e (guia 03, secao 5).
+            - name: AWS_REGION
+              value: us-east-1
+            # Repare no que NAO esta aqui: AWS_ACCESS_KEY_ID. Em Python e em
+            # Go essa variavel venceria o IRSA e o calaria por completo; no
+            # .NET nao venceria. Guia 07, secao 2 - e o fato de a resposta
+            # depender da linguagem e exatamente o motivo de nunca por a
+            # variavel aqui.
+          volumeMounts:
+            - name: comprovantes
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits:   { memory: 256Mi }
+      volumes:
+        - name: comprovantes
+          persistentVolumeClaim:
+            claimName: comprovantes-cobranca
+---
+# ---------------------------------------------------------------------------
+# consumer-baixa
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-baixa
+  namespace: cash
+  labels: { app: consumer-baixa }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: consumer-baixa }
+  template:
+    metadata:
+      labels: { app: consumer-baixa }
+    spec:
+      serviceAccountName: sa-consumer-baixa
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: consumer
+          image: 111122223333.dkr.ecr.us-east-1.amazonaws.com/cash-cobranca-consumer:1.0.0
+          env:
+            - name: WORKER
+              value: baixa
+            - name: QUEUE_URL
+              value: https://sqs.us-east-1.amazonaws.com/111122223333/cobranca-baixa
+            - name: DATA_PATH
+              value: /data
+            - name: AWS_REGION
+              value: us-east-1
+          volumeMounts:
+            - name: comprovantes
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits:   { memory: 256Mi }
+      volumes:
+        - name: comprovantes
+          persistentVolumeClaim:
+            claimName: comprovantes-cobranca
+---
+# ---------------------------------------------------------------------------
+# consumer-rejeicao
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-rejeicao
+  namespace: cash
+  labels: { app: consumer-rejeicao }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: consumer-rejeicao }
+  template:
+    metadata:
+      labels: { app: consumer-rejeicao }
+    spec:
+      serviceAccountName: sa-consumer-rejeicao
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: consumer
+          image: 111122223333.dkr.ecr.us-east-1.amazonaws.com/cash-cobranca-consumer:1.0.0
+          env:
+            - name: WORKER
+              value: rejeicao
+            - name: QUEUE_URL
+              value: https://sqs.us-east-1.amazonaws.com/111122223333/cobranca-rejeicao
+            - name: DATA_PATH
+              value: /data
+            - name: AWS_REGION
+              value: us-east-1
+          volumeMounts:
+            - name: comprovantes
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits:   { memory: 256Mi }
+      volumes:
+        - name: comprovantes
+          persistentVolumeClaim:
+            claimName: comprovantes-cobranca
+---
+# ---------------------------------------------------------------------------
+# publisher
+#
+# Repare: ele NAO monta o volume e NAO le fila nenhuma. So publica. A role
+# dele (infra/iam/policy-publisher.json) tem exatamente uma acao: sns:Publish.
+# E a demonstracao mais curta de "uma role por unidade deployavel".
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: publisher
+  namespace: cash
+  labels: { app: publisher }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: publisher }
+  template:
+    metadata:
+      labels: { app: publisher }
+    spec:
+      serviceAccountName: sa-publisher
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: publisher
+          image: 111122223333.dkr.ecr.us-east-1.amazonaws.com/cash-cobranca-publisher:1.0.0
+          env:
+            - name: TOPIC_ARN_COBRANCA_REGISTRADA
+              value: arn:aws:sns:us-east-1:111122223333:eventos-cobranca
+            - name: TOPIC_ARN_COBRANCA_BAIXADA
+              value: arn:aws:sns:us-east-1:111122223333:eventos-cobranca
+            - name: TOPIC_ARN_COBRANCA_REJEITADA
+              value: arn:aws:sns:us-east-1:111122223333:eventos-cobranca
+            - name: INTERVALO_SEGUNDOS
+              value: "3"
+            - name: AWS_REGION
+              value: us-east-1
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits:   { memory: 128Mi }

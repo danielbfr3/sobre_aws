@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConsumirApenasAPropriaFila",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:DeleteMessageBatch",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ChangeMessageVisibility"
+      ],
+      "Resource": [
+        "arn:aws:sqs:us-east-1:111122223333:cobranca-registro",
+        "arn:aws:sqs:us-east-1:111122223333:cobranca-registro-dlq"
+      ]
+    },
+    {
+      "Sid": "DecifrarAsMensagensDaFila",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt"],
+      "Resource": "arn:aws:kms:us-east-1:111122223333:key/EXAMPLE-KEY-ID",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "sqs.us-east-1.amazonaws.com" }
+      }
+    }
+  ]
+}

@@ -94,7 +94,18 @@ func Novo(servico, worker, linguagem, dataPath string) *Log {
 	return l
 }
 
-// Campos e o par nome/valor extra de um evento. Ordem preservada.
+// Campos e o par nome/valor extra de um evento.
+//
+// ATENCAO: a iteracao de um map em Go e ALEATORIA por design, entao a ordem
+// destes campos extras varia de linha para linha do NDJSON. Isso e aceitavel
+// de proposito: o que precisa de ordem fixa e o PREFIXO do registro (ts,
+// nivel, servico, ...), montado a mao em escrever(), porque e ele que faz o
+// `sort` de texto do trace.sh coincidir com a ordem cronologica. Os extras vem
+// depois e nenhum consumidor deste log depende da ordem deles.
+//
+// Se um dia isso mudar - um diff de NDJSON entre linguagens, por exemplo -
+// ordene as chaves antes de serializar. Nao confie em ordem de insercao: em
+// Go ela nao existe.
 type Campos map[string]any
 
 func (l *Log) Evento(evento, msg, trace string, campos Campos) {

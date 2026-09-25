@@ -1,0 +1,100 @@
+{
+  "family": "cash-cobranca-consumer-registro",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+
+  "_comentario_roles": [
+    "AS DUAS ROLES. Confundi-las e o erro numero 1 de quem vem do EKS,",
+    "e o sintoma e cruel: a task sobe, fica saudavel, os logs aparecem no",
+    "CloudWatch - e o codigo toma AccessDenied na primeira chamada a SQS.",
+    "",
+    "executionRoleArn = usada pelo AGENTE do ECS, ANTES do seu codigo existir:",
+    "                   puxa a imagem do ECR, escreve log, resolve secrets.",
+    "                   Falha aqui = a task nem inicia.",
+    "                   Pode ser compartilhada entre os tres consumers.",
+    "",
+    "taskRoleArn      = usada pelo SEU CODIGO. E o equivalente direto da role",
+    "                   do IRSA. E daqui que sai o sqs:ReceiveMessage.",
+    "                   Uma por worker, como no lab do EKS.",
+    "",
+    "Regra mental: execution = antes do seu codigo; task = o seu codigo."
+  ],
+  "executionRoleArn": "arn:aws:iam::111122223333:role/asa-dev-ecs-task-execution",
+  "taskRoleArn": "arn:aws:iam::111122223333:role/asa-dev-cash-cobranca-consumer-registro",
+
+  "_comentario_efemero": [
+    "Eleva os 20 GiB padrao do Fargate. Continua sendo armazenamento NAO",
+    "persistente - some quando a task para."
+  ],
+  "ephemeralStorage": { "sizeInGiB": 21 },
+
+  "containerDefinitions": [
+    {
+      "name": "consumer",
+      "image": "111122223333.dkr.ecr.us-east-1.amazonaws.com/cash-cobranca-consumer:1.0.0",
+      "essential": true,
+
+      "_comentario_env": [
+        "O MESMO codigo do lab, sem uma linha de diferenca. A cadeia padrao",
+        "do SDK descobre sozinha o endpoint de credenciais do ECS em",
+        "169.254.170.2, via AWS_CONTAINER_CREDENTIALS_RELATIVE_URI - que o",
+        "agente injeta. Nenhum AWSCredentials no construtor, aqui tambem.",
+        "",
+        "AWS_REGION precisa ser declarado, igual no EKS: regiao e credencial",
+        "sao duas cadeias independentes (guia 03, secao 5)."
+      ],
+      "environment": [
+        { "name": "WORKER", "value": "registro" },
+        { "name": "QUEUE_URL", "value": "https://sqs.us-east-1.amazonaws.com/111122223333/cobranca-registro" },
+        { "name": "DATA_PATH", "value": "/data" },
+        { "name": "AWS_REGION", "value": "us-east-1" }
+      ],
+
+      "mountPoints": [
+        { "sourceVolume": "comprovantes", "containerPath": "/data", "readOnly": false }
+      ],
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/cash-cobranca",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "consumer-registro"
+        }
+      },
+
+      "user": "1000:1000",
+      "readonlyRootFilesystem": false,
+      "stopTimeout": 30
+    }
+  ],
+
+  "_comentario_volume": [
+    "NAO EXISTE PVC AQUI. O volume e declarado inline na task definition -",
+    "mais simples e menos portavel que o par StorageClass/PVC do Kubernetes.",
+    "",
+    "E a linha que mais surpreende quem vem do EKS e a do authorizationConfig:",
+    "com \"iam\": \"ENABLED\", a TASK ROLE precisa de elasticfilesystem:ClientMount",
+    "e ClientWrite para montar. No EKS isso nao existe - o pod monta sem",
+    "permissao IAM nenhuma, e quem precisa de role e o driver CSI.",
+    "",
+    "Esquecer essas duas acoes faz a task morrer no mount, ANTES de logar",
+    "qualquer coisa util da aplicacao."
+  ],
+  "volumes": [
+    {
+      "name": "comprovantes",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-0123abcd",
+        "rootDirectory": "/",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-0123abcd",
+          "iam": "ENABLED"
+        }
+      }
+    }
+  ]
+}

@@ -11,6 +11,9 @@
 #   ./run.sh trace <id>         mostra a cadeia daquele trace
 #   ./run.sh trace --dlq        so os traces que falharam (rumo a DLQ)
 #
+# A listagem normal mostra os 25 traces mais recentes. O --dlq NAO tem esse
+# corte: falha e rara e voce pode ir ler o resultado meia hora depois.
+#
 # Repare no que NAO tem aqui: nenhum jq, nenhum parser. O `sort` de texto puro
 # ordena os eventos corretamente porque "ts" e a PRIMEIRA chave do JSON e tem
 # largura fixa. Foi essa decisao, la no log.py, que deixou este script curto.
@@ -100,8 +103,28 @@ if [[ -z "$ALVO" || "$ALVO" == "--dlq" ]]; then
       *)                                     COR="$CINZA" ;;
     esac
     printf "  %-34s %-10s %-9s ${COR}%-22s${NEUTRO} %s\n" "$trace" "$W" "$L" "$EVT" "$N"
-  done < <(grep -o '"traceId":"[0-9a-f]\{32\}"' <<< "$LOGS" \
-             | sed 's/.*:"//;s/"//' | awk '!visto[$0]++' | tail -25)
+  done < <(
+    if [[ $SO_FALHA -eq 1 ]]; then
+      # EM MODO --dlq, NAO LIMITE A LISTA.
+      #
+      # O publisher gera um trace novo a cada 3 segundos, entao um "tail -25"
+      # cobre menos de 80 segundos de lab. Quem fizesse o experimento da DLQ
+      # (etapa 9) e fosse ler o resultado um minuto depois veria uma lista
+      # VAZIA e concluiria que o rastreamento nao funciona - justamente no
+      # caso em que ele vale mais.
+      #
+      # Aqui a busca parte dos eventos de falha, que sao raros, em vez de
+      # partir de todos os traces e filtrar depois.
+      grep -F '"evento":"mensagem.falhou"' <<< "$LOGS" \
+        | grep -o '"traceId":"[0-9a-f]\{32\}"' \
+        | sed 's/.*:"//;s/"//' | awk '!visto[$0]++'
+    else
+      # Na listagem normal o corte existe de proposito: sem ele a tela
+      # encheria de traces antigos e bem-sucedidos, que nao ensinam nada.
+      grep -o '"traceId":"[0-9a-f]\{32\}"' <<< "$LOGS" \
+        | sed 's/.*:"//;s/"//' | awk '!visto[$0]++' | tail -25
+    fi
+  )
 
   echo
   echo "  Para ver a cadeia inteira de um deles:"
@@ -159,7 +182,7 @@ N_FALHAS=$(grep -cF '"evento":"mensagem.falhou"' <<< "$DO_TRACE")
 if [[ "$N_FALHAS" -ge 3 ]]; then
   echo -e "  ${VERMELHO}$N_FALHAS tentativas falharam.${NEUTRO} Com maxReceiveCount=3 na RedrivePolicy,"
   echo "  esta mensagem ja foi para a DLQ. Repare que as tres tentativas tem o"
-  echo "  MESMO trace: ele foi derivado do MessageId, nao sorteado (guia 07 §6)."
+  echo "  MESMO trace: ele foi derivado do MessageId, nao sorteado (guia 07 §7)."
 elif [[ "$N_FALHAS" -gt 0 ]]; then
   echo -e "  ${AMARELO}$N_FALHAS tentativa(s) falharam${NEUTRO} - a mensagem volta pelo visibility timeout."
 fi

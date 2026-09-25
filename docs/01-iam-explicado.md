@@ -39,19 +39,40 @@ O primeiro item é o motivo de existirem SCPs e permission boundaries (seção 9
 
 ## 2. Anatomia de um statement
 
-Pegue `infra/iam/policy-consumer-registro.json` e leia campo a campo:
+Abra [`infra/iam/policy-consumer-registro.json`](../infra/iam/policy-consumer-registro.json).
+Ele tem dois statements; este é o primeiro, campo a campo:
 
 ```json
 {
   "Sid": "ConsumirApenasAPropriaFila",
   "Effect": "Allow",
-  "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage"],
+  "Action": [
+    "sqs:ReceiveMessage",
+    "sqs:DeleteMessage",
+    "sqs:DeleteMessageBatch",
+    "sqs:GetQueueAttributes",
+    "sqs:GetQueueUrl",
+    "sqs:ChangeMessageVisibility"
+  ],
   "Resource": [
     "arn:aws:sqs:us-east-1:111122223333:cobranca-registro",
     "arn:aws:sqs:us-east-1:111122223333:cobranca-registro-dlq"
   ]
 }
 ```
+
+Vale reparar em **por que são seis ações e não duas**. `ReceiveMessage` e
+`DeleteMessage` são as que o código chama explicitamente; as outras quatro o
+SDK chama por baixo, ou você precisa delas no primeiro incidente:
+`GetQueueUrl` quando o worker recebe o *nome* da fila em vez da URL,
+`GetQueueAttributes` para inspecionar profundidade e DLQ,
+`ChangeMessageVisibility` para estender o prazo de uma mensagem que está
+demorando, e `DeleteMessageBatch` se um dia você agrupar os deletes.
+
+Essa é a tensão real do *least privilege*: a policy mínima que funciona hoje
+costuma ser menor que a mínima que **continua** funcionando. A saída não é
+chutar para mais — é usar o IAM Access Analyzer (§10), que lê o CloudTrail e
+diz quais ações foram de fato usadas.
 
 - **`Sid`** — identificador livre, só para humanos. Não afeta nada. Use para explicar a intenção.
 - **`Effect`** — `Allow` ou `Deny`. Só isso.

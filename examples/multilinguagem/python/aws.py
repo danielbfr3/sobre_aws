@@ -10,9 +10,14 @@ import os
 import boto3
 from botocore.config import Config
 
-# Retry adaptativo: o modo "standard"/"adaptive" do botocore ja trata
-# throttling e erros transitorios. Sem isto, um pico no STS ou na SQS vira
-# excecao no seu loop em vez de uma nova tentativa silenciosa.
+# Retry no modo "standard": o botocore ja trata throttling e erros
+# transitorios com backoff exponencial. Sem isto, um pico no STS ou na SQS
+# vira excecao no seu loop em vez de uma nova tentativa silenciosa.
+#
+# Existe tambem o modo "adaptive", que acrescenta rate limiting do lado do
+# cliente. Ele NAO e o padrao e nao e usado aqui: so ajuda quando varios
+# processos disputam a mesma cota, e tem comportamento menos previsivel.
+# Para um worker de fila, "standard" e a escolha certa.
 _CONFIG = Config(retries={"max_attempts": 5, "mode": "standard"})
 
 

@@ -1,0 +1,36 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EscreverOsProprosLogs",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:us-east-1:111122223333:log-group:/aws/lambda/consumer-registro:*"
+    },
+    {
+      "Sid": "PollingDaFilaFeitoPeloSERVICOLambda",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:111122223333:cobranca-registro"
+    },
+    {
+      "Sid": "GravarOComprovanteNoS3",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::asa-dev-comprovantes-cobranca/registro/*"
+    },
+    {
+      "Sid": "CifrarOObjetoNoS3",
+      "Effect": "Allow",
+      "Action": ["kms:GenerateDataKey", "kms:Encrypt"],
+      "Resource": "arn:aws:kms:us-east-1:111122223333:key/EXAMPLE-KEY-ID",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" }
+      }
+    }
+  ]
+}

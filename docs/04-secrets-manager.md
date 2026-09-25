@@ -74,7 +74,17 @@ Faz cache, renova em background e é a resposta certa na maioria dos casos.
 
 ### Opção B — manual, quando você precisa de controle
 
-Está em [`examples/secrets/SegredoProvider.cs`](../examples/secrets/SegredoProvider.cs), com dois cuidados que o exemplo oficial não cobre:
+Está implementado nas três linguagens do lab, e você pode rodar:
+
+```bash
+./run.sh segredos python     # e também: go, dotnet
+```
+
+O código é [`segredos.py`](../examples/multilinguagem/python/segredos.py),
+[`cmd/segredos/main.go`](../examples/multilinguagem/go/cmd/segredos/main.go) e
+[`Segredos.cs`](../examples/multilinguagem/dotnet/Segredos.cs). Os três fazem
+cinco leituras e **uma** ida à AWS, depois simulam uma rotação acontecendo com
+o processo no ar. Dois cuidados que o exemplo oficial não cobre:
 
 **TTL menor que o intervalo de rotação.** Se a senha rotaciona a cada 30 dias e seu cache tem TTL de 1 hora, a janela de credencial velha é de no máximo 1 hora. Um cache eterno (`static` populado uma vez na subida) significa que o worker quebra na rotação e **só volta com restart** — que é o modo de falha mais comum e mais irritante desse tema.
 
@@ -225,7 +235,7 @@ Uma role que enxerga os segredos do próprio domínio e de nenhum outro — sem 
 
 ## 9. Testando localmente
 
-<cite index="3-1">O Floci emula Secrets Manager, com versionamento, resource policies e tagging.</cite> Dá para criar e ler segredos exatamente como na AWS:
+O Floci emula Secrets Manager, com versionamento, resource policies e tagging. Dá para criar e ler segredos exatamente como na AWS:
 
 ```bash
 export AWS_ENDPOINT_URL=http://localhost:4566

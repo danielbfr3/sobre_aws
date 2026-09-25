@@ -14,7 +14,7 @@ O contraponto deste capítulo é o [`08-fsx-smb.md`](08-fsx-smb.md): lá o diret
 
 Tudo o que segue é consequência disso.
 
-**É `ReadWriteMany`.** Vários pods, em várias AZs, montam o mesmo filesystem ao mesmo tempo, e todos leem e escrevem. É a razão de o EFS existir: o EBS é `ReadWriteOnce` e não faz isso. No lab, é o que torna verificável a afirmação do [ROTEIRO](ROTEIRO.md) de que o `consumer-baixa` consegue ler os arquivos que o `consumer-registro` escreveu.
+**É `ReadWriteMany`.** Vários pods, em várias AZs, montam o mesmo filesystem ao mesmo tempo, e todos leem e escrevem. É a razão de o EFS existir: o EBS é `ReadWriteOnce` e não faz isso. No lab, é o que torna verificável a afirmação do [ROTEIRO](../ROTEIRO.md) de que o `consumer-baixa` consegue ler os arquivos que o `consumer-registro` escreveu.
 
 **É POSIX de verdade.** Permissão de uid/gid, hard link, `append`, lock, `stat` (o que é POSIX, e por que o termo carrega peso nestes guias, está no [guia 06](06-eks-ecs-lambda.md) §3). Não é uma emulação de filesystem sobre armazenamento de objetos — é um filesystem. É por isso que o `link(2)` em que a idempotência do lab se apoia ([guia 07](07-implementacoes-python-go-dotnet.md) §5) funciona sem ressalva, coisa que o capítulo 08 não pôde afirmar sobre SMB.
 
@@ -209,7 +209,7 @@ Se você habilitar a exigência sem habilitar a opção no cliente, o sintoma é
 
 ## 5. O que muda no código, em Python, Go e .NET
 
-**Nada.** Não há SDK, não há credencial, não há cliente para reusar, não há região para configurar. `/data` é um diretório. O `ComprovanteWriter` das três linguagens não sabe que existe EFS, e é assim que deve ser — é a promessa do CSI, e ela se cumpre.
+**Nada.** Não há SDK, não há credencial, não há cliente para reusar, não há região para configurar. `/data` é um diretório. O módulo de comprovante das três linguagens não sabe que existe EFS, e é assim que deve ser — é a promessa do CSI, e ela se cumpre.
 
 Isso é uma diferença real em relação a todo o resto do lab. SQS, SNS, Secrets Manager e KMS aparecem no código como chamada de rede explícita, com erro tipado e credencial atrás. O EFS aparece como `open()`.
 
@@ -295,7 +295,7 @@ A regra geral: **um arquivo por escritor** é sempre melhor que vários escritor
 
 O caso mais comum de "não consigo escrever no EFS" não tem nada a ver com IAM. O diretório existe, o mount subiu, e a escrita falha porque o **uid do processo dentro do container** não bate com o dono do diretório — o `fsGroup` do pod contra o gid do Access Point.
 
-O lab já defende contra isso na subida, e o comentário em [`consumer.py`](examples/multilinguagem/python/consumer.py) diz exatamente por quê:
+O lab já defende contra isso na subida, e o comentário em [`consumer.py`](../examples/multilinguagem/python/consumer.py) diz exatamente por quê:
 
 > No EFS o diretório pode existir e ainda assim negar escrita, quando o `fsGroup` do pod não bate com o gid do Access Point. Sem esta checagem o worker sobe saudável, processa mensagens, grava tudo no filesystem **efêmero** do container — e você só descobre quando o pod morre.
 
@@ -340,7 +340,7 @@ Nenhum deles menciona role, policy ou ARN — **porque não é IAM**. Procurar a
 - Nenhuma das três implementações chama `fsync`, `Sync()` ou equivalente (`grep` em `examples/` — não há ocorrência).
 - As três propagam o erro de `close()`: Python pelo `with`, .NET pelo `using`, e Go porque `os.WriteFile` devolve explicitamente o erro do `Close()` — o trecho da stdlib está em §5.2.
 - O lab não usa lock de arquivo em lugar nenhum; a exclusão mútua é por nome de arquivo mais `link(2)`.
-- A sonda de escrita na subida existe e o comentário dela nomeia o EFS e o `fsGroup` ([`consumer.py`](examples/multilinguagem/python/consumer.py)).
+- A sonda de escrita na subida existe e o comentário dela nomeia o EFS e o `fsGroup` ([`consumer.py`](../examples/multilinguagem/python/consumer.py)).
 
 **Afirma com base na especificação do protocolo, não em medição minha:**
 

@@ -4,7 +4,7 @@ Passo a passo do zero ao fim. Cada etapa tem **o que fazer**, **o que esperar**,
 
 O `README.md` é referência (como o lab é montado). As [apostilas](docs/README.md) são teoria. **Este arquivo é a ordem em que fazer as coisas.**
 
-Tempo total: cerca de 2h45 se você fizer tudo. Dá para parar depois do Bloco 2 e voltar outro dia — o `docker compose down` preserva o volume.
+Tempo total: cerca de **3h** se você fizer tudo. Dá para parar depois do Bloco 2 e voltar outro dia — o `docker compose down` preserva o volume.
 
 | Bloco | Etapas | Tempo | O que você sai sabendo |
 |---|---|---|---|
@@ -12,9 +12,12 @@ Tempo total: cerca de 2h45 se você fizer tudo. Dá para parar depois do Bloco 2
 | 1 — Ver antes de ler | 2 | 10 min | o desenho inteiro na cabeça |
 | 2 — Rodar | 3–5 | 20 min | o pipeline funcionando e conferido |
 | 3 — Experimentos | 6–10 | 45 min | por que cada peça existe |
-| 4 — IAM | 11–13 | 30 min | roles, cadeia de credenciais, isolamento |
-| 5 — Três linguagens | 14–16 | 40 min | o que **não** depende da linguagem, e como rastrear |
-| 6 — Levar adiante | 17–18 | 20 min | Kubernetes de verdade e o seu trabalho |
+| 4 — IAM | 11–14 | 45 min | roles, cross-account, cadeia de credenciais |
+| 5 — Três linguagens | 15–17 | 40 min | o que **não** depende da linguagem, e como rastrear |
+| 6 — Levar adiante | 18–19 | 20 min | Kubernetes de verdade e o seu trabalho |
+
+São 19 etapas. Os tempos somam 3h05; arredonde para cima se for a sua primeira
+vez com `docker compose`.
 
 ---
 
@@ -27,15 +30,19 @@ Tempo total: cerca de 2h45 se você fizer tudo. Dá para parar depois do Bloco 2
 ```bash
 docker --version      # qualquer versão recente com "docker compose"
 aws --version         # aws-cli v2
-dotnet --version      # 10.x — opcional, só para os projetos .NET soltos
+jq --version          # só a etapa 13 (cross-account) precisa
 ```
 
-**Esperar:** as duas primeiras respondem. O `dotnet` é opcional.
+**Esperar:** as três respondem. As duas primeiras são obrigatórias.
 
 > **Não é preciso ter Python, Go nem .NET instalados.** Os três workers do lab
-> são compilados dentro do Docker, em build multi-estágio.
+> são compilados dentro do Docker, em build multi-estágio — é o que a etapa 15
+> explora.
 
 > **Se faltar o aws-cli:** ele é obrigatório. O `bootstrap.sh` e o `verify.sh` falam com o Floci por ele.
+
+> **Se faltar o `jq`:** só a etapa 13 para. `brew install jq` no macOS,
+> `apt install jq` no Debian/Ubuntu.
 
 **Ler mais:** nada ainda.
 
@@ -96,7 +103,7 @@ xdg-open docs/assets/visualizador.html    # Linux
 > Os três consumers estão em **três linguagens diferentes** — `consumer-registro`
 > em Python, `consumer-baixa` em Go, `consumer-rejeicao` em .NET. Por enquanto
 > ignore isso: o ponto do bloco 5 é justamente que não faz diferença nenhuma
-> daqui até a etapa 13.
+> daqui até a etapa 14.
 
 **O que você aprendeu:** a ordem importa. O `bootstrap.sh` precisa rodar com o emulador de pé, e grava o `.env` com o ARN do tópico que só existe depois dele. Subir os workers antes não quebra (eles têm retry), mas enche o log de erro.
 
@@ -143,14 +150,32 @@ Aguarde uns 30 segundos antes de rodar.
   COMPROVANTE DE BAIXA DE COBRANÇA
 ================================================================
 Nosso número......: 4827193
+Evento............: cobranca.baixada
 Valor.............: R$ 1.234,56
+Ocorrido em.......: 08/08/2026 17:42:03 UTC
 ----------------------------------------------------------------
 Processado por....: baixa
 Pod / host........: 8f3a1c22b4d1        <-- guarde este valor
+Message ID........: 9f3a1c22-5e88-4b1d-a0f7-1c9e2b6d4a51
+Trace ID..........: a1b2c3d4e5f6071829304a5b6c7d8e9f
 Tentativa.........: 1                   <-- e este
+Registrado em.....: 08/08/2026 17:42:04 UTC
+Hash do payload...: 299E3E228C2D1224528490FAAE4B8C27
+================================================================
+Documento gerado automaticamente para fins de laboratório.
+Não possui valor fiscal ou probatório.
 ```
 
-**O que você aprendeu:** `Pod / host` é `Environment.MachineName`, que dentro de um pod é o nome do pod. `Tentativa` vem do `ApproximateReceiveCount` da SQS — se aparecer `2` ou `3`, aquela mensagem já falhou antes. Os dois campos voltam nas etapas 7 e 8.
+(Os valores mudam a cada execução — o `nossoNumero` e o horário são sorteados
+pelo publisher. O formato é o que importa, e ele é **idêntico nas três
+linguagens**: é o que a etapa 16 prova.)
+
+**O que você aprendeu:** `Pod / host` é o hostname do processo — `MachineName`
+no .NET, `socket.gethostname()` no Python, `os.Hostname()` no Go —, que dentro
+de um pod é o nome do pod. `Tentativa` vem do `ApproximateReceiveCount` da SQS:
+se aparecer `2` ou `3`, aquela mensagem já falhou antes. `Hash do payload` é a
+chave de idempotência, e os 8 primeiros caracteres dele estão no nome do
+arquivo. Os três campos voltam nas etapas 7, 8 e 17.
 
 **Ler mais:** `README.md` §3.
 
@@ -213,7 +238,7 @@ Repare nos dois códigos depois do nome do worker: são `trace_id` **diferentes*
 Cada publicação ganhou o seu. Mas o comprovante não foi reescrito — então o
 arquivo guarda para sempre o trace da **primeira** gravação. Está correto: o
 documento registra quem o criou, não quem tentou recriá-lo. Você volta a isso
-na etapa 16.
+na etapa 17.
 
 **O que você aprendeu:** SQS entrega **pelo menos uma vez**, então duplicata não é exceção, é rotina. O nome do arquivo deriva do hash do payload — a idempotência mora no estado compartilhado, não em memória. Ela sobrevive a restart do pod e vale entre réplicas.
 
@@ -369,11 +394,76 @@ O pod sobe normalmente, mas o `AssumeRoleWithWebIdentity` falha: o claim `sub` d
 
 ---
 
-## Etapa 13 — A cadeia de credenciais e o Secrets Manager
+## Etapa 13 — Origem e destino: atravessar a fronteira de conta
 
-Sem pré-requisito: roda dentro do container. (Se você tiver `dotnet` e a pasta
-`examples/dotnet-credenciais/` existir, `./run.sh diagnostico` sem argumento usa
-ela; caso contrário cai no worker Python.)
+As duas etapas anteriores trataram de roles dentro de **uma** conta. Em banco,
+dev/hml/prod costumam ser contas AWS diferentes — e role não atravessa conta.
+Esta etapa faz a travessia acontecer na sua frente.
+
+**Fazer:**
+
+```bash
+./run.sh cross-account
+```
+
+> **Pré-requisito:** este exercício usa `jq`. Se faltar: `brew install jq` ou
+> `apt install jq`. É o único comando do roteiro que precisa dele.
+
+**Esperar:** quatro etapas numeradas. A que vale o exercício inteiro é a 3 —
+o número da conta em `get-caller-identity` **muda** de `111122223333` para
+`444455556666` sem você trocar de terminal, de perfil ou de máquina:
+
+```
+  PASSOU  a conta de origem NAO enxerga a fila da conta de destino
+  PASSOU  AccessKeyId comeca com ASIA - credencial TEMPORARIA, do STS
+  PASSOU  a conta virou 444455556666 - voce atravessou a fronteira
+  PASSOU  a identidade e uma SESSAO da role, nao a role
+```
+
+**Como ler:** repare em **quantos documentos cada lado criou**. A origem criou
+um (a identity policy: *posso pedir para assumir aquela role?*). O destino criou
+dois (a trust policy: *aceito ser assumido por quem?*; e a permission policy:
+*depois de assumida, o que ela faz?*). Essa assimetria é a razão de a maioria
+dos `AccessDenied` cross-account morar no lado do destino.
+
+**O que você aprendeu:** três coisas, e a terceira é a que mais custa caro
+quando falta.
+
+1. O isolamento entre contas é real: na etapa 1 do exercício a conta de origem
+   simplesmente **não enxerga** a fila da outra. Nenhuma conta se auto-concede
+   acesso à outra.
+2. Depois de assumir, você não *é* a role — você é uma **sessão** dela, e o ARN
+   muda de `iam::…:role/X` para `sts::…:assumed-role/X/Sessao`. Colar o segundo
+   numa bucket policy não funciona, e a mensagem de erro mostra justamente o
+   ARN que não serve.
+3. **O Floci aceitou os três JSONs sem avaliar nenhum.** Ele não é ponto de
+   decisão de autorização. Você praticou *qual documento mora em qual conta* —
+   que é o que a maioria erra — e não se a policy concede o certo. Para isso,
+   IAM Policy Simulator.
+
+O exercício termina com seis perguntas. Responda antes de olhar o guia; a
+número 6 é desconfortável de propósito.
+
+**Limpar:**
+
+```bash
+./run.sh cross-account --limpar
+```
+
+**Ver no desenho:** a aba **Cross-account** do
+[`docs/assets/visualizador.html`](docs/assets/visualizador.html) percorre o
+mesmo caminho com duas contas lado a lado, mostrando a cada salto qual
+identidade está em ação e qual documento decide.
+
+**Ler mais:** [`docs/02-assume-role-cross-account.md`](docs/02-assume-role-cross-account.md) §1 e §2.
+
+---
+
+## Etapa 14 — A cadeia de credenciais e o Secrets Manager
+
+Sem pré-requisito: roda dentro do container, então não precisa de Python, Go
+nem .NET na sua máquina. Sem argumento, `./run.sh diagnostico` usa o worker
+Python.
 
 **Fazer:**
 
@@ -399,14 +489,20 @@ exportá-las no seu shell não as levaria para lá. É a mesma lição do
 `kubectl exec ... env | grep AWS_` do guia 01: o ambiente que importa é o do
 processo, não o seu.
 
-**Esperar:** o alerta dispara.
+**Esperar:** o alerta dispara e a seção 2 confirma quem venceu.
 
 ```
   (!) AWS_ACCESS_KEY_ID e AWS_ROLE_ARN presentes ao mesmo tempo.
-      Variavel de ambiente vence IRSA na cadeia. O IRSA esta sendo IGNORADO.
+      No botocore a variavel de ambiente vence o web identity,
+      entao o IRSA esta sendo IGNORADO aqui.
+
+--- 2. Qual provedor venceu
+  method .......: env
 ```
 
-**O que você aprendeu:** um `AWS_ACCESS_KEY_ID` esquecido num ConfigMap **cala o IRSA por completo**. O SDK nunca chega no provedor de web identity porque o de env vars respondeu antes. É a causa mais comum de "o IRSA não funciona" — e não aparece em nenhuma policy.
+**O que você aprendeu:** em Python, um `AWS_ACCESS_KEY_ID` esquecido num ConfigMap **cala o IRSA por completo**. O SDK nunca chega no provedor de web identity porque o de env vars respondeu antes. É a causa mais comum de "o IRSA não funciona" — e não aparece em nenhuma policy.
+
+Guarde o resultado: a etapa 15 roda o **mesmo** experimento em Go e em .NET, e só dois dos três se comportam assim.
 
 **Fazer em seguida:**
 
@@ -444,13 +540,13 @@ docker compose ps --format 'table {{.Service}}\t{{.Command}}'
 
 **Esperar:** `python -u consumer.py`, `/app/consumer` e `dotnet Lab.dll consumer`.
 
-**O que você aprendeu:** as etapas 3 a 13 funcionaram sem que você soubesse
+**O que você aprendeu:** as etapas 3 a 14 funcionaram sem que você soubesse
 disso. Nada do que você fez até aqui — filas, DLQ, roles, trust policy,
 volume compartilhado — dependia da linguagem.
 
 ---
 
-## Etapa 14 — A mesma cadeia de credenciais, três vocabulários
+## Etapa 15 — A mesma cadeia de credenciais, três vocabulários
 
 **Fazer:**
 
@@ -468,31 +564,56 @@ volume compartilhado — dependia da linguagem.
   tipo .........: EnvironmentVariablesAWSCredentials    (.NET)
 ```
 
-**Fazer agora o experimento da etapa 13, mas em Go:**
+**Agora o experimento que vale a etapa.** Repita o da etapa 14 nas **três**
+linguagens, simulando o ConfigMap com um `AWS_ACCESS_KEY_ID` esquecido *junto*
+com o IRSA:
 
 ```bash
-docker compose run --rm \
-  -e AWS_ROLE_ARN=arn:aws:iam::111122223333:role/qualquer \
-  -e AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token-falso \
-  consumer-baixa /app/diagnostico
+for svc_cmd in "consumer-registro python -u diagnostico.py" \
+               "consumer-baixa /app/diagnostico" \
+               "consumer-rejeicao dotnet Lab.dll diagnostico"; do
+  docker compose run --rm \
+    -e AWS_ROLE_ARN=arn:aws:iam::111122223333:role/qualquer \
+    -e AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token-falso \
+    $svc_cmd 2>&1 | grep -A2 'Qual provedor venceu' || true
+done
 ```
 
-**Esperar:** o mesmo alerta, palavra por palavra.
+> O `|| true` é necessário: o diagnóstico do .NET sai com código 1 porque
+> tenta o `GetCallerIdentity` com o token falso e falha. É o esperado — e é
+> justamente a prova de que ele escolheu o web identity em vez da variável de
+> ambiente.
+
+**Antes de rodar, anote o seu palpite:** os três vão ignorar o IRSA?
+
+**Esperar:** não.
 
 ```
-  (!) AWS_ACCESS_KEY_ID e AWS_ROLE_ARN presentes ao mesmo tempo.
-      Variavel de ambiente vence IRSA na cadeia. O IRSA esta sendo IGNORADO.
+  method .......: env                                    (Python)  <- IRSA ignorado
+  Source .......: EnvConfigCredentials                   (Go)      <- IRSA ignorado
+  tipo .........: AssumeRoleWithWebIdentityCredentials   (.NET)    <- IRSA VENCEU
 ```
 
-**O que você aprendeu:** o bug do IRSA silenciado **não é do .NET**. Os três
-SDKs implementam a mesma cadeia, na mesma ordem, e param no mesmo elo. Quando
-alguém do time disser "isso é coisa do SDK de vocês", esta é a resposta.
+**O que você aprendeu:** a frase "a cadeia de credenciais é a mesma em todos os
+SDKs" é falsa, e ninguém percebe porque quase ninguém mede. Em Python e Go a
+variável de ambiente vem antes do web identity; **no .NET o web identity vem
+antes** — e o perfil `~/.aws` também vence a variável de ambiente, coisa que
+não acontece nos outros dois.
 
-**Ler mais:** [`docs/07-implementacoes-python-go-dotnet.md`](docs/07-implementacoes-python-go-dotnet.md) §2.
+A consequência prática é desagradável: o mesmo ConfigMap errado derruba o
+`consumer-registro` e o `consumer-baixa` e **deixa o `consumer-rejeicao`
+funcionando**. Dois workers com `AccessDenied` e um saudável, mesma role, mesmo
+cluster — e o time procura a causa na policy, que está certa.
+
+A lição que sobra não é decorar as três ordens. É que **medir custa um
+comando**, e que uma ferramenta de diagnóstico dentro do ambiente vale mais que
+qualquer tabela decorada, inclusive a do capítulo 07.
+
+**Ler mais:** [`docs/07-implementacoes-python-go-dotnet.md`](docs/07-implementacoes-python-go-dotnet.md) §2 e [`docs/03-credenciais-no-dotnet.md`](docs/03-credenciais-no-dotnet.md) §2.
 
 ---
 
-## Etapa 15 — Trocar a linguagem de um worker sem perder a idempotência
+## Etapa 16 — Trocar a linguagem de um worker sem perder a idempotência
 
 Primeiro, prove que as três geram o mesmo arquivo:
 
@@ -559,7 +680,7 @@ vezes: no restart e na troca.
 
 ---
 
-## Etapa 16 — Seguir uma mensagem do início ao fim
+## Etapa 17 — Seguir uma mensagem do início ao fim
 
 Até aqui você leu logs soltos. Agora vai seguir **uma** mensagem atravessando
 quatro processos e três linguagens.
@@ -587,12 +708,18 @@ quatro processos e três linguagens.
 **Esperar:**
 
 ```
-  17:11:00.665  publish.iniciado      publisher/python
-  17:11:00.672  publish.ok            publisher/python
-  17:11:00.698  mensagem.recebida     rejeicao/dotnet
-  17:11:00.716  comprovante.gravado   rejeicao/dotnet
-  17:11:00.720  mensagem.deletada     rejeicao/dotnet
+  17:11:00.665431  publish.iniciado      publisher/python
+  17:11:00.672118  publish.ok            publisher/python
+  17:11:00.698904  mensagem.recebida     rejeicao/dotnet
+  17:11:00.716277  comprovante.gravado   rejeicao/dotnet
+  17:11:00.720045  mensagem.deletada     rejeicao/dotnet
 ```
+
+São **microssegundos**, não milissegundos, e isso não é capricho: com 3 casas
+dois eventos do mesmo processo caem no mesmo instante com frequência, e o
+`sort` de texto do `trace.sh` passa a desempatar em ordem alfabética do nome do
+evento — mostrando `mensagem.falhou` antes de `mensagem.recebida`. O guia 07 §7
+detalha.
 
 **O que você aprendeu:** o `trace_id` nasceu no publisher (Python), viajou como
 *MessageAttribute* do SNS, e o consumer (.NET) o encontrou do outro lado. A
@@ -616,8 +743,18 @@ Trace ID..........: 396806d777684edbb42e48df284ce9d2
 Tentativa.........: 1
 ```
 
+**Repare agora numa coisa que parece erro e não é:** o `Message ID` do
+comprovante **não bate** com o `messageId=` que aparece no `publish.ok` da
+mesma cadeia. Volte e confira — são dois UUIDs diferentes.
+
+Os dois estão certos. O publisher registra o id que o **SNS** devolveu; o
+comprovante registra o id que a **SQS** atribuiu na entrega. O SNS gera um id
+novo por entrega, e com três subscriptions um `Publish` vira três ids de SQS.
+
 **O que você aprendeu:** de um arquivo no volume você volta para a história
-inteira. Sem esse campo, o artefato seria um beco sem saída.
+inteira — e é o `Trace ID` que permite isso, não o `Message ID`. Tentar
+correlacionar publisher e consumer pelo `MessageId` é um beco sem saída que
+parece um caminho, porque o campo está bem ali nos dois lados.
 
 **Fazer agora o caso que mais ensina** — a mensagem que não dá para processar:
 
@@ -662,7 +799,7 @@ Compare um trace verde (gravado) com um vermelho (falhou 3×).
 
 # Bloco 6 — Levar adiante
 
-## Etapa 17 — Kubernetes de verdade
+## Etapa 18 — Kubernetes de verdade
 
 O Floci não reproduz o webhook do IRSA. Para ver os objetos do Kubernetes funcionando, use um cluster local.
 
@@ -699,7 +836,7 @@ kind delete cluster --name cobranca-lab
 
 ---
 
-## Etapa 18 — Trazer para o seu trabalho
+## Etapa 19 — Trazer para o seu trabalho
 
 Sem comando. É a etapa que consolida.
 
@@ -733,8 +870,30 @@ Sem o `-v` (`docker compose down`), os comprovantes ficam para a próxima sessã
 | `./run.sh comparar` acusa divergência | as regras do comprovante mudaram numa linguagem só — guia 07 §4 |
 | `permission denied` em `/data` | uid da imagem diferente do dono do volume; é POSIX, não IAM — guia 07 §11 |
 | `./run.sh trace` não acha nada | o lab está no ar? os logs só existem depois que algo é publicado |
+| `./run.sh trace` não lista um trace que você acabou de ver | a listagem normal mostra só os 25 mais recentes, e o publisher gera um a cada 3s. Use `./run.sh trace <id>` direto, ou `--dlq`, que não tem esse corte |
+| `./run.sh cross-account` reclama de `jq` | `brew install jq` / `apt install jq` — etapa 1 |
+| `Message ID` do comprovante ≠ o do `publish.ok` | esperado: um é da SQS, o outro do SNS — etapa 17 |
+| `./run.sh roles` falha com `EntityAlreadyExists` | rode `./run.sh roles --limpar` antes |
 | a cadeia pára no `publish.ok` | faltou `MessageAttributeNames` no `ReceiveMessage` — guia 07 §7 |
 
 ## Depois do roteiro
 
-As apostilas em [`docs/`](docs/README.md) aprofundam cada assunto. A ordem sugerida está no [índice](docs/README.md), e a trilha rápida por problema ("quero debugar um `AccessDenied`" → tal capítulo) fica no fim dele.
+As apostilas em [`docs/`](docs/README.md) aprofundam cada assunto. A ordem
+sugerida está no [índice](docs/README.md), e a trilha rápida por problema
+("quero debugar um `AccessDenied`" → tal capítulo) fica no fim dele.
+
+Três capítulos **não** são exercitados por nenhuma etapa acima, e vale saber
+por quê antes de abri-los:
+
+| Capítulo | Por que não tem etapa |
+|---|---|
+| [05 — KMS](docs/05-kms.md) | é transversal: ele volta em cada capítulo anterior e mostra onde a criptografia muda a resposta. Leia depois de ter os outros na cabeça. |
+| [08 — FSx e SMB](docs/08-fsx-smb.md) | o lab não sobe servidor SMB. O capítulo separa explicitamente o que é fato do que é hipótese a testar no seu ambiente (§9). Leia **antes** de abrir o chamado para a infra — metade dele é a lista de perguntas a fazer. |
+| [09 — EFS](docs/09-efs.md) | é o que o `/data` do lab vira num cluster de verdade. Leia quando alguém pedir um PVC, ou quando quiser entender por que o `link(2)` da idempotência é seguro lá e não é sobre SMB. |
+
+E o que fazer com o ambiente:
+
+```bash
+docker compose down     # preserva o volume e os comprovantes
+./run.sh reset          # derruba tudo e APAGA o volume
+```

@@ -535,7 +535,7 @@ Chamadas cross-account aparecem no CloudTrail das **duas** contas — o `AssumeR
 
 ## 5. Praticando o isolamento no Floci
 
-<cite index="3-1">O Floci suporta multi-account: se o `AWS_ACCESS_KEY_ID` tiver exatamente 12 dígitos, ele é usado como ID da conta, e recursos criados por uma conta ficam invisíveis para outra.</cite> Credenciais de `AssumeRole` também resolvem para a conta da role assumida — então o fluxo "assume role e depois provisiona na outra conta" funciona localmente:
+O Floci suporta multi-account: se o `AWS_ACCESS_KEY_ID` tiver exatamente 12 dígitos, ele é usado como ID da conta, e recursos criados por uma conta ficam invisíveis para outra. Credenciais de `AssumeRole` também resolvem para a conta da role assumida — então o fluxo "assume role e depois provisiona na outra conta" funciona localmente:
 
 ```bash
 export AWS_ENDPOINT_URL=http://localhost:4566 AWS_DEFAULT_REGION=us-east-1

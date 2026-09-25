@@ -1,6 +1,6 @@
 # Guias
 
-Nove capítulos, na ordem em que fazem sentido ler. Cada um pressupõe o anterior, mas todos funcionam sozinhos se você já conhece o tema.
+Dez capítulos, na ordem em que fazem sentido ler. Cada um pressupõe o anterior, mas todos funcionam sozinhos se você já conhece o tema.
 
 | # | Guia | Responde |
 |---|---|---|
@@ -13,6 +13,7 @@ Nove capítulos, na ordem em que fazem sentido ler. Cada um pressupõe o anterio
 | 06 | [EKS vs ECS vs Lambda](06-eks-ecs-lambda.md) | As mesmas ideias nas outras plataformas de compute. |
 | 07 | [Python, Go e .NET](07-implementacoes-python-go-dotnet.md) | O mesmo worker em três linguagens. O que **não** muda. Log estruturado e `trace_id`. |
 | 08 | [FSx e SMB](08-fsx-smb.md) | Quando o diretório de rede não é NFS. Active Directory no lugar do IAM. |
+| 09 | [EFS](09-efs.md) | O volume que os três workers compartilham, quando vira infra de verdade. |
 
 ## Por que essa ordem
 
@@ -38,6 +39,13 @@ abrir o chamado para a infra, porque metade do capítulo é a lista de perguntas
 Diferente dos outros, ele **não é exercitado pelo lab**; ele mesmo diz o que é fato e o que
 é hipótese a testar.
 
+**09 fecha o par com o 08.** O 08 mostra o diretório de rede que *não* é NFS; o 09 é o
+capítulo do que o lab realmente usa — EFS, ou seja, um servidor NFSv4.1 gerenciado. Ele
+responde "o que muda no código?" com *nada*, e passa o capítulo inteiro qualificando esse
+nada em cinco pontos: por que o `link(2)` da idempotência é seguro ali, por que o `close()`
+faz mais no EFS do que no seu disco local, e por que `permission denied` em `/data` nunca é
+problema de IAM. Leia depois do 06 §3, ou quando alguém pedir um PVC de verdade.
+
 ## Trilha rápida por problema
 
 | Você quer | Leia |
@@ -60,6 +68,11 @@ Diferente dos outros, ele **não é exercitado pelo lab**; ele mesmo diz o que �
 | Saber o que perguntar para a infra antes de pedir FSx | 08 §6 |
 | Entender por que o `fsGroup` não resolve permissão no SMB | 08 §4.4 |
 | Descobrir por que o mount do SMB nem chega a tentar | 08 §3.2 (quase sempre é DNS) |
+| Entender por que o IRSA some em Python e Go mas não em .NET | **07 §2** — as cadeias não têm a mesma ordem |
+| Escolher entre EFS, EBS e S3 | 09 §1 |
+| Descobrir por que o pod fica em `ContainerCreating` para sempre | 09 §4, ponto 0 |
+| Saber se precisa chamar `fsync` no EFS | 09 §5.2 |
+| Entender por que `permission denied` em `/data` não é IAM | 09 §5.5 |
 
 ## Código de apoio
 
@@ -67,17 +80,26 @@ Cada guia aponta para os artefatos que usa, em [`../examples/`](../examples/):
 
 | Pasta | Guia | Status |
 |---|---|---|
-| `dotnet-credenciais/` | [03](03-credenciais-no-dotnet.md) | **executável**: `./run.sh diagnostico` |
-| `secrets/` | [04](04-secrets-manager.md) | **executável** contra o Floci: `./run.sh segredos` |
-| `lambda/` | [06](06-eks-ecs-lambda.md) | compila; publicar exige conta AWS |
-| `ecs/` | [06](06-eks-ecs-lambda.md) | JSON de configuração, com valores de exemplo |
-| `multilinguagem/python/` | [07](07-implementacoes-python-go-dotnet.md) | **roda no lab** — é o `consumer-registro` |
+| `multilinguagem/python/` | [03](03-credenciais-no-dotnet.md), [04](04-secrets-manager.md), [07](07-implementacoes-python-go-dotnet.md) | **roda no lab** — é o `consumer-registro` e o `publisher` |
 | `multilinguagem/go/` | [07](07-implementacoes-python-go-dotnet.md) | **roda no lab** — é o `consumer-baixa` |
 | `multilinguagem/dotnet/` | [07](07-implementacoes-python-go-dotnet.md) | **roda no lab** — é o `consumer-rejeicao` |
+| `ecs/` | [06](06-eks-ecs-lambda.md) | JSON de configuração, com valores de exemplo |
+| `lambda/` | [06](06-eks-ecs-lambda.md) | o handler, para comparar com o consumer do lab |
 
-Os `.cs` são projetos de verdade, com `.csproj` próprio — `./run.sh build` compila todos.
-As três pastas de `multilinguagem/` compilam **dentro do Docker** (build multi-estágio):
-não é preciso ter Python, Go nem dotnet instalados para rodar o lab.
+Cada uma das três pastas de `multilinguagem/` traz o worker **e** os programas dos
+capítulos 03 e 04 — o diagnóstico da cadeia de credenciais (`./run.sh diagnostico python|go|dotnet`)
+e a demo de cache com TTL (`./run.sh segredos python|go|dotnet`). As três compilam **dentro
+do Docker** (build multi-estágio): não é preciso ter Python, Go nem dotnet instalados para
+rodar o lab.
+
+E em [`../infra/`](../infra/):
+
+| Pasta | Guia | O que é |
+|---|---|---|
+| `local/` | todos | `bootstrap.sh`, `verify.sh`, `trace.sh` e o exercício de cross-account |
+| `iam/` | [01](01-iam-explicado.md), [02](02-assume-role-cross-account.md) | as 5 trust policies + 5 permission policies, e um exemplo de Pod Identity |
+| `aws/` | [01](01-iam-explicado.md) | `create-roles.sh` — cria as roles a partir dos JSONs de `iam/` |
+| `k8s/` | [01](01-iam-explicado.md), README §4 | ServiceAccounts anotadas, Deployments e o PVC |
 Os `.json` de policy têm `111122223333` e `EXAMPLED539...` no lugar da sua conta e do seu
 OIDC; não existe "rodar" uma trust policy, ela é substituída e aplicada.
 

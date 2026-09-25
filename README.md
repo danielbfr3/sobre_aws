@@ -7,9 +7,9 @@ Laboratório local para entender três coisas que aparecem juntas em quase toda 
 3. **Volume persistente** — como um worker acessa um diretório que sobrevive ao pod.
 
 > **Comece pelos guias em [`docs/`](docs/README.md)** se a parte de infra AWS é nova para você.
-> São nove capítulos numa ordem pensada: do que é uma role, passando por como o SDK .NET
+> São dez capítulos numa ordem pensada: do que é uma role, passando por como o SDK
 > a descobre sozinho, até o que muda quando há criptografia no caminho — e, no fim, o que
-> muda quando o diretório de rede é SMB em vez de NFS (08) ou EFS de verdade (09). O índice em
+> muda quando o diretório de rede é SMB (08) ou EFS de verdade (09). O índice em
 > [`docs/README.md`](docs/README.md) tem uma trilha rápida por problema
 > ("quero debugar um `AccessDenied`" → tal capítulo).
 >
@@ -31,22 +31,22 @@ Laboratório local para entender três coisas que aparecem juntas em quase toda 
 aws-eks-lab/
 ├── ROTEIRO.md                   ← O PASSO A PASSO, do zero ao fim
 ├── run.sh                       ← orquestra o lab na ordem correta
-├── docs/                        ← os nove guias (índice em docs/README.md)
+├── docs/                        ← os dez guias (índice em docs/README.md)
 ├── docker-compose.yml           ← Floci + publisher + 3 consumers
 ├── infra/
 │   ├── local/bootstrap.sh       ← cria SNS, SQS, DLQs e subscriptions no Floci
 │   ├── local/verify.sh          ← checa se os resultados esperados aconteceram
-│   ├── aws/create-roles.sh      ← cria UMA ROLE POR WORKER
+│   ├── local/trace.sh           ← remonta a cadeia de uma mensagem pelo trace_id
+│   ├── local/exercicio-cross-account.sh   ← a travessia de conta, na tela (guia 02)
+│   ├── aws/create-roles.sh      ← cria UMA ROLE POR WORKER, a partir de iam/
 │   ├── iam/                     ← 5 roles (trust + permission) + 1 exemplo Pod Identity
 │   └── k8s/                     ← ServiceAccounts, Deployments, PVC
-├── infra/local/trace.sh         ← remonta a cadeia de uma mensagem pelo trace_id
-├── src/
-│   ├── Publisher/               ← publica eventos no SNS
-│   └── Consumer/                ← consome a fila e grava o comprovante .txt
-└── examples/                    ← credenciais, secrets, ECS, Lambda
-    └── multilinguagem/          ← O MESMO worker em Python, Go e .NET (guia 07)
-        ├── comparar.sh          ← prova que as 3 geram o mesmo comprovante
-        ├── python/  go/  dotnet/
+└── examples/
+    ├── multilinguagem/          ← O MESMO worker em Python, Go e .NET (guia 07)
+    │   ├── comparar.sh          ← prova que as 3 geram o mesmo comprovante
+    │   └── python/  go/  dotnet/
+    ├── ecs/                     ← as DUAS roles e o volume inline (guia 06)
+    └── lambda/                  ← o handler, para comparar com o consumer (guia 06)
 ```
 
 > **Os três consumers que sobem com `./run.sh up` estão em três linguagens
@@ -198,11 +198,11 @@ Cada consumer grava **um arquivo `.txt` por evento processado** dentro do volume
 /data/comprovantes/
 ├── registro/
 │   └── 2026-08-08/
-│       ├── 4827193-A1B2C3D4.txt
-│       └── 5910284-7F3E9A01.txt
+│       ├── 5910284-7F3E9A01.txt
+│       └── 6620114-1C0D55AE.txt
 ├── baixa/
 │   └── 2026-08-08/
-│       └── 3374018-B2C4E6F8.txt
+│       └── 4827193-299E3E22.txt     ← o exemplo abaixo
 └── rejeicao/
     └── 2026-08-08/
         └── 8821457-D9E0F1A2.txt
@@ -227,11 +227,23 @@ Message ID........: 9f3a1c22-5e88-4b1d-a0f7-1c9e2b6d4a51
 Trace ID..........: a1b2c3d4e5f6071829304a5b6c7d8e9f
 Tentativa.........: 1
 Registrado em.....: 08/08/2026 17:42:04 UTC
-Hash do payload...: A1B2C3D4E5F60718293A4B5C6D7E8F90
+Hash do payload...: 299E3E228C2D1224528490FAAE4B8C27
 ================================================================
 Documento gerado automaticamente para fins de laboratório.
 Não possui valor fiscal ou probatório.
 ```
+
+Esse comprovante não é ilustrativo: é a **amostra determinística** que
+`./run.sh comparar` gera nas três linguagens, a partir do payload
+
+```json
+{"nossoNumero":"4827193","tipoEvento":"cobranca.baixada","valorCentavos":123456,"ocorridoEm":"2026-08-08T17:42:03Z"}
+```
+
+O `299E3E228C2D1224528490FAAE4B8C27` é o MD5 desses bytes exatos, e os 8
+primeiros caracteres dele são o sufixo do nome do arquivo. Python, Go e .NET
+produzem os mesmos 1086 bytes de saída — se um dia não produzirem, o
+`comparar` acusa.
 
 O campo **Pod / host** é `Environment.MachineName`, que dentro de um pod é o nome do pod. Rodando com 2 réplicas você vê os comprovantes se dividindo entre elas — é a prova visual de que a SQS distribui sozinha, sem coordenação entre réplicas.
 
@@ -249,11 +261,11 @@ Detalhes em [`docs/07-implementacoes-python-go-dotnet.md`](docs/07-implementacoe
 
 **O nome do arquivo é a chave de idempotência.** Ele deriva do hash do payload (`{nossoNumero}-{hash8}.txt`), então a mesma mensagem entregue duas vezes gera o mesmo nome, e a segunda vez encontra o arquivo já existente e desiste. Vantagem sobre o `HashSet` em memória da versão anterior: **sobrevive a restart do pod e vale entre réplicas diferentes**, porque o volume é compartilhado. Idempotência que mora no estado, não na memória.
 
-**A escrita é atômica** — grava num `.tmp` e faz `File.Move(..., overwrite: false)`. Sem isso, um pod morto no meio do write deixa um `.txt` truncado; e como o nome já existe, a lógica de idempotência nunca mais tenta de novo. O `overwrite: false` também resolve a corrida entre duas réplicas: quem perder recebe `IOException`, verifica que o destino existe, e trata como duplicata.
+**A escrita é atômica** — grava num `.tmp` e só então publica o nome definitivo. Sem isso, um pod morto no meio do write deixa um `.txt` truncado; e como o nome já existe, a lógica de idempotência nunca mais tenta de novo. A chamada que publica o nome precisa **falhar** se o destino já existe, senão a corrida entre duas réplicas é resolvida por sobrescrita silenciosa: é `os.link`/`os.Link` em Python e Go, e `File.Move(..., overwrite: false)` no .NET. Quem perde a corrida trata como duplicata. O [guia 07](docs/07-implementacoes-python-go-dotnet.md) §5 mostra por que `rename` é a tradução errada.
 
 **O `DeleteMessage` vem depois de gravar o comprovante.** A ordem é deliberada: se o processo morrer entre as duas coisas, a mensagem volta pela expiração do visibility timeout e o comprovante sai na próxima tentativa. A ordem inversa criaria a janela oposta — mensagem sumindo sem comprovante nenhum.
 
-Tem também um `VerificarVolume` na subida do worker que grava e apaga um arquivo-sonda. Parece paranoia e não é: no EFS o diretório pode existir e ainda assim negar escrita se o `fsGroup` do pod não bater com o `gid` do Access Point. Sem essa checagem, o worker sobe feliz, processa mensagens, grava tudo no filesystem efêmero do container, e você só descobre quando o pod morre.
+Tem também uma **sonda de volume** na subida do worker (`verificar_volume` / `verificarVolume` / `VerificarVolume`, uma por linguagem) que grava e apaga um arquivo de teste. Parece paranoia e não é: no EFS o diretório pode existir e ainda assim negar escrita se o `fsGroup` do pod não bater com o `gid` do Access Point. Sem essa checagem, o worker sobe feliz, processa mensagens, grava tudo no filesystem efêmero do container, e você só descobre quando o pod morre.
 
 ### Conferindo localmente
 
@@ -328,7 +340,7 @@ Duas armadilhas práticas:
 
 ### O que muda no seu código: quase nada, e as exceções
 
-Do lado da aplicação, um volume EFS montado é **só um diretório**. `File.WriteAllTextAsync`, `Directory.GetFiles`, `File.Exists` — `System.IO` normal. É exatamente o que o `ComprovanteWriter.cs` faz: nenhuma linha ali sabe que `/data` é NFS, e essa ignorância é proposital.
+Do lado da aplicação, um volume EFS montado é **só um diretório**: `open()`/`write()` no Python e no Go, `System.IO` no .NET. É exatamente o que os três módulos de comprovante fazem ([`comprovante.py`](examples/multilinguagem/python/comprovante.py), [`comprovante.go`](examples/multilinguagem/go/comprovante/comprovante.go), [`Comprovante.cs`](examples/multilinguagem/dotnet/Comprovante.cs)): nenhuma linha ali sabe que `/data` é NFS, e essa ignorância é proposital.
 
 Quatro coisas, porém, mudam de comportamento:
 
@@ -340,11 +352,11 @@ var dataPath = Environment.GetEnvironmentVariable("DATA_PATH") ?? "/data";
 
 Não é preciosismo: localmente você monta um volume Docker comum, no cluster é um PVC EFS, e em teste unitário é um diretório temporário. Um `const string "/data"` te obriga a rodar em container para testar qualquer coisa.
 
-**Falha de permissão vem como `UnauthorizedAccessException`, não como erro de IAM.** Se o `fsGroup` do pod não bate com o `gid` do Access Point, o .NET lança `UnauthorizedAccessException` no primeiro write. Nenhum `AccessDenied`, nenhuma menção a role — porque não é IAM, é POSIX. Procurar a causa na policy é o caminho errado e custa tempo. É por isso que o `QueueConsumer` grava um arquivo-sonda na subida: transforma esse erro tardio e confuso numa falha imediata com mensagem clara.
+**Falha de permissão vem como `UnauthorizedAccessException`, não como erro de IAM.** Se o `fsGroup` do pod não bate com o `gid` do Access Point, o .NET lança `UnauthorizedAccessException` no primeiro write. Nenhum `AccessDenied`, nenhuma menção a role — porque não é IAM, é POSIX. Procurar a causa na policy é o caminho errado e custa tempo. É por isso que os três consumers gravam um arquivo-sonda na subida: transforma esse erro tardio e confuso numa falha imediata com mensagem clara.
 
-**Lock de arquivo se comporta diferente sobre NFS.** `FileStream` com `FileShare.None`, `FileStream.Lock()` e afins dependem de lock advisory do NFS, que tem semântica distinta da de um disco local — e fica mais frágil quando várias réplicas disputam o mesmo arquivo. A saída prática é não depender de lock: o lab usa **um arquivo por evento, com nome determinístico**, e escrita atômica via `File.Move(..., overwrite: false)`. Quem perde a corrida recebe `IOException` e trata como duplicata. Desenhar para "cada escritor tem seu próprio arquivo" evita o problema em vez de tentar resolvê-lo.
+**Lock de arquivo se comporta diferente sobre NFS.** `flock`, `fcntl` e o `FileStream` com `FileShare.None` dependem de lock *advisory* do NFS, que tem semântica distinta da de um disco local — e fica mais frágil quando várias réplicas disputam o mesmo arquivo. A saída prática é não depender de lock: o lab usa **um arquivo por evento, com nome determinístico**, e resolve a corrida com uma chamada atômica que falha se o destino existe (`link(2)`). Quem perde trata como duplicata. Desenhar para "cada escritor tem seu próprio arquivo" evita o problema em vez de tentar resolvê-lo.
 
-**Toda operação de I/O é uma ida à rede.** EFS é NFS: um `File.Exists` custa um round-trip, não um acesso a disco. Isso não quebra nada, mas muda o que é caro. Um loop que faz `Directory.GetFiles` a cada iteração, ou que verifica existência de mil arquivos um a um, tem um custo em EFS que não teria em disco local. Vale por isso o particionamento por data (`/comprovantes/<worker>/<AAAA-MM-DD>/`): um `ls` num diretório com milhões de entradas sobre NFS é doloroso de um jeito que em disco local não seria.
+**Toda operação de I/O é uma ida à rede.** EFS é NFS: um `exists()` custa um round-trip, não um acesso a disco. Isso não quebra nada, mas muda o que é caro. Um loop que lista o diretório a cada iteração, ou que verifica existência de mil arquivos um a um, tem um custo em EFS que não teria em disco local. Vale por isso o particionamento por data (`/comprovantes/<worker>/<AAAA-MM-DD>/`): um `ls` num diretório com milhões de entradas sobre NFS é doloroso de um jeito que em disco local não seria.
 
 **Se o diretório de rede for SMB e não NFS** — FSx for Windows File Server, o caso comum em empresa com legado Windows — quase tudo desta seção muda de lugar: a autenticação sai do IAM e vai para o Active Directory, o `fsGroup` deixa de ser a resposta para *permission denied*, e o `link(2)` em que a idempotência se apoia pode não existir. Está em [`docs/08-fsx-smb.md`](docs/08-fsx-smb.md).
 
@@ -382,9 +394,9 @@ O aprofundamento está em [`docs/06-eks-ecs-lambda.md`](docs/06-eks-ecs-lambda.m
 
 Em ECS, **nada**. Nem uma linha. O `Program.cs` continua sem credencial no construtor, e a cadeia padrão do SDK descobre o endpoint de credenciais do ECS sozinha. Essa portabilidade é o retorno concreto de nunca passar `AWSCredentials` explicitamente.
 
-Em Lambda, o `QueueConsumer.cs` **muda de forma**: o `while(true)`, o `ReceiveMessageAsync`, o long polling e o `DeleteMessageAsync` desaparecem — o serviço Lambda faz tudo isso. Em troca aparecem duas preocupações novas: **falha parcial de lote** (`ReportBatchItemFailures`, senão um erro em uma mensagem devolve o lote inteiro à fila) e **visibility timeout ≥ 6× o timeout da função**. A idempotência continua obrigatória, porque event source mapping também é entrega *pelo menos uma vez*.
+Em Lambda, o consumer **muda de forma**: o `while(true)`, o `ReceiveMessage`, o long polling e o `DeleteMessage` desaparecem — o serviço Lambda faz tudo isso. Em troca aparecem duas preocupações novas: **falha parcial de lote** (`ReportBatchItemFailures`, senão um erro em uma mensagem devolve o lote inteiro à fila) e **visibility timeout ≥ 6× o timeout da função**. A idempotência continua obrigatória, porque event source mapping também é entrega *pelo menos uma vez*.
 
-Compare `src/Consumer/QueueConsumer.cs` com [`examples/lambda/Function.cs`](examples/lambda/Function.cs) — os comentários apontam o que sumiu e por quê.
+Compare [`examples/multilinguagem/dotnet/Consumer.cs`](examples/multilinguagem/dotnet/Consumer.cs) com [`examples/lambda/Function.cs`](examples/lambda/Function.cs) — os comentários apontam o que sumiu e por quê.
 
 ### Qual escolher
 
@@ -446,7 +458,7 @@ Se preferir rodar etapa por etapa: `./run.sh bootstrap` e `./run.sh workers`.
 
 ### Resultados esperados
 
-`./run.sh verify` checa 20+ afirmações e diz **qual capítulo revisar** quando alguma falha:
+`./run.sh verify` checa **23 afirmações** e diz **qual capítulo revisar** quando alguma falha:
 
 ```
 --- 2. Filas e DLQs
@@ -485,14 +497,14 @@ aws iam get-role --role-name asa-dev-cash-cobranca-consumer-registro \
 
 | Experimento | O que fazer | O que observar |
 |---|---|---|
-| **DLQ** | Force uma exceção no `ProcessarAsync` | A mensagem reaparece 3× e some da fila principal → está na `-dlq` |
-| **Visibility timeout** | Baixe para `5` e ponha `Task.Delay(30s)` no processamento | A mesma mensagem é processada em paralelo por dois workers |
+| **DLQ** | `aws sqs send-message --message-body 'isto-nao-e-json'` | A mensagem reaparece 3× e some da fila principal → está na `-dlq` |
+| **Visibility timeout** | Baixe para `5` com `set-queue-attributes` e mande um payload inválido | A mensagem volta a cada 5s em vez de 60 — é o que acelera o teste da DLQ |
 | **Idempotência** | Publique o mesmo payload duas vezes | O comprovante não é reescrito; o nome do arquivo é a chave |
 | **Comprovante** | `find /data/comprovantes -name '*.txt'` | Um txt por evento, particionado por worker e data |
 | **Durabilidade** | `docker compose restart consumer-baixa` | Os comprovantes continuam lá — o volume sobrevive ao container |
 | **Escala horizontal** | `docker compose up --scale consumer-registro=3` | A SQS distribui sozinha, sem coordenação entre réplicas |
 | **Filtro** | Mande `eventType=cobranca.registrada` e olhe as 3 filas | Só uma recebe — o roteamento é do broker, não seu |
-| **Isolamento de role** | Compare os 3 `policy-consumer-*.json` | Ache o único campo que muda entre eles |
+| **Isolamento de role** | `diff infra/iam/policy-consumer-registro.json infra/iam/policy-consumer-baixa.json` | Ache o único campo que muda entre eles |
 | **Quebrar permissões** | Abra [`docs/assets/visualizador.html`](docs/assets/visualizador.html) | Onde o fluxo para quando cada policy some |
 | **Três linguagens, um comprovante** | `./run.sh comparar` | Python, Go e .NET geram o mesmo arquivo, byte a byte |
 | **Cadeia de credenciais** | `./run.sh diagnostico go` (ou `python`, `dotnet`) | Três vocabulários de SDK, uma cadeia só |
@@ -521,7 +533,7 @@ Os três consumers que o `./run.sh up` sobe não são a mesma imagem:
 | Serviço | Linguagem | SDK |
 |---|---|---|
 | `consumer-registro` | Python 3.12 | boto3 / botocore |
-| `consumer-baixa` | Go 1.25 | `aws-sdk-go-v2` |
+| `consumer-baixa` | Go 1.24 | `aws-sdk-go-v2` |
 | `consumer-rejeicao` | .NET 10 | `AWSSDK` |
 
 Isso não é enfeite. É a demonstração de que **nada das seções 1 a 6 depende da linguagem**: as filas, as roles, a resource policy, o volume compartilhado e as 23 checagens do `verify.sh` são exatamente os mesmos. O único acoplamento real entre os três é o **formato do comprovante**, porque o nome do arquivo é a chave de idempotência — e isso o lab prova em vez de afirmar:
@@ -579,19 +591,19 @@ Código em [`examples/multilinguagem/`](examples/multilinguagem/). Nenhuma das t
 
 ## 8. Por onde começar
 
-O passo a passo completo — 17 etapas, cerca de 2h30, com o que esperar em cada uma — está em **[`ROTEIRO.md`](ROTEIRO.md)**.
+O passo a passo completo — **19 etapas, cerca de 3h**, com o que esperar em cada uma — está em **[`ROTEIRO.md`](ROTEIRO.md)**.
 
 Resumo dos blocos:
 
-| Bloco | O que você faz | Tempo |
-|---|---|---|
-| 0 | confere pré-requisitos | 5 min |
-| 1 | abre o visualizador e quebra permissões | 10 min |
-| 2 | `./run.sh up` e `./run.sh verify` | 20 min |
-| 3 | cinco experimentos: roteamento, idempotência, escala, DLQ, durabilidade | 45 min |
-| 4 | cria as roles, lê as trust policies, testa a cadeia de credenciais | 30 min |
-| 5 | compara as três linguagens e troca a linguagem de um worker | 25 min |
-| 6 | leva para um `kind` local e para o seu trabalho | 20 min |
+| Bloco | Etapas | O que você faz | Tempo |
+|---|---|---|---|
+| 0 | 1 | confere pré-requisitos | 5 min |
+| 1 | 2 | abre o visualizador e quebra permissões | 10 min |
+| 2 | 3–5 | `./run.sh up` e `./run.sh verify` | 20 min |
+| 3 | 6–10 | cinco experimentos: roteamento, idempotência, escala, DLQ, durabilidade | 45 min |
+| 4 | 11–14 | cria as roles, atravessa a fronteira de conta, testa a cadeia de credenciais | 45 min |
+| 5 | 15–17 | compara as três linguagens, troca a linguagem de um worker, rastreia uma mensagem | 40 min |
+| 6 | 18–19 | leva para um `kind` local e para o seu trabalho | 20 min |
 
 Se preferir estudar antes de rodar, o índice das apostilas está em [`docs/README.md`](docs/README.md).
 
@@ -603,12 +615,16 @@ Vale saber o que está conferido e o que depende de você rodar:
 |---|---|
 | JSON de todas as policies | validado (parse + estrutura) |
 | YAML dos manifests e do compose | validado |
-| Coerência `serviceAccountName` ↔ trust policy | validado por script |
+| Coerência `serviceAccountName` ↔ trust policy | validado por script — os 4 Deployments, os 4 SAs e os 4 `:sub` batem |
+| `./run.sh roles` contra o Floci | executado — 5 roles, 2 documentos cada |
+| `./run.sh cross-account` | executado — 12/12 passaram |
+| DLQ: `maxReceiveCount=3` e trace derivado | executado — 3 tentativas, **um** trace, mensagem na DLQ |
 | Sintaxe dos shell scripts | `bash -n` em todos |
 | Escape JSON do `bootstrap.sh` | testado (round-trip) |
 | Links entre os guias | validado |
 | Build das três imagens (Python, Go, .NET) | executado |
 | `./run.sh up` + `./run.sh verify` | **executado — 23/23 passaram** |
+| Links relativos entre README, ROTEIRO e os 10 guias | validado por script — 0 quebrados |
 | Equivalência dos três comprovantes | **executada** — `./run.sh comparar`, 1086 bytes idênticos |
 | Cadeia de credenciais nas três linguagens | executada — `./run.sh diagnostico {python,go,dotnet}` |
 | Cache com TTL nas três linguagens | executado — `./run.sh segredos {python,go,dotnet}` |
@@ -617,12 +633,16 @@ Vale saber o que está conferido e o que depende de você rodar:
 | Troca de linguagem de um worker sem apagar o volume | executada — o worker Go recusou como duplicata um comprovante do .NET |
 | `trace_id` propagado do publisher ao comprovante | executado — cadeia Python → .NET num só trace |
 | `trace_id` derivado na DLQ | executado — 3 tentativas, um trace, `./run.sh trace --dlq` |
-| **Compilação dos projetos `src/` em C#** | **não verificada** — rode `./run.sh build` |
+| Ordem da cadeia de credenciais nos três SDKs | **medida** — e ela **não** é a mesma nos três; veja [guia 07](docs/07-implementacoes-python-go-dotnet.md) §2 |
+| Exercício cross-account contra o Floci | executado — `./run.sh cross-account` |
+| **Tudo do [guia 08](docs/08-fsx-smb.md) (FSx/SMB)** | **não verificado** — o lab não sobe servidor SMB; o §9 daquele guia separa fato de hipótese |
 
-O único item em aberto é a compilação dos projetos `.NET` soltos de `src/` e
-`examples/` (que exigem `dotnet` na máquina). Todo o resto foi executado de
-ponta a ponta contra o Floci. O `verify.sh` continua sendo a forma de conferir
-do seu lado: ele codifica os resultados esperados como checagens.
+Dois itens ficam em aberto, e os dois estão marcados no lugar certo: o capítulo
+08 (SMB/FSx) não é exercitado por nada aqui, e os manifests de `infra/k8s/`
+descrevem um cluster EKS real — a etapa 18 do ROTEIRO os aplica num `kind` só
+para você ler o `describe`, não para os pods subirem. Todo o resto foi
+executado de ponta a ponta contra o Floci. O `verify.sh` continua sendo a forma
+de conferir do seu lado: ele codifica os resultados esperados como checagens.
 
 ## Referências
 

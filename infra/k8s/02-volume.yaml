@@ -1,0 +1,52 @@
+# O volume compartilhado dos comprovantes.
+#
+# ORDEM IMPORTA: aplique ESTE arquivo ANTES do 01-workers-irsa.yaml. Um
+# Deployment cujo PVC ainda nao existe fica em Pending com uma mensagem pouco
+# obvia - `persistentvolumeclaim "comprovantes-cobranca" not found` -, e a
+# etapa 18 do ROTEIRO manda voce provocar isso de proposito para reconhecer.
+#
+# O numero do arquivo (02) e maior que o do Deployment (01) justamente para
+# lembrar que a numeracao NAO e a ordem de aplicacao. Se fosse, voce aplicaria
+# `kubectl apply -f infra/k8s/` e daria errado metade das vezes.
+#
+# Por que EFS e nao EBS: os tres consumers montam o MESMO diretorio ao mesmo
+# tempo. EBS e ReadWriteOnce - a segunda replica ficaria Pending para sempre
+# esperando um volume ja montado em outro no. O capitulo 09 detalha.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-comprovantes
+# Normalmente quem cria a StorageClass e a equipe de plataforma, uma vez por
+# cluster. Esta aqui para o arquivo ficar autocontido e legivel.
+provisioner: efs.csi.aws.com
+parameters:
+  # efs-ap = um Access Point por PVC. O Access Point e o que forca uid/gid e
+  # diretorio raiz em toda operacao (capitulo 09, secao 3).
+  provisioningMode: efs-ap
+  fileSystemId: fs-0123abcd            # troque pelo seu
+  directoryPerms: "775"
+  # A FAIXA DE GID. O fsGroup dos Deployments precisa cair aqui dentro - se
+  # nao cair, o pod sobe, monta, e toma PermissionError no primeiro write.
+  # E POSIX, nao IAM: nao adianta mexer na role (capitulo 09, secao 5.5).
+  gidRangeStart: "1000"
+  gidRangeEnd: "2000"
+reclaimPolicy: Retain                  # comprovante nao se apaga junto com o PVC
+volumeBindingMode: Immediate           # EFS e multi-AZ; nao precisa esperar o pod
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: comprovantes-cobranca
+  namespace: cash
+spec:
+  # O motivo de ser EFS. Com EBS isto seria ReadWriteOnce e o lab inteiro
+  # deixaria de funcionar com mais de uma replica.
+  accessModes: [ReadWriteMany]
+  storageClassName: efs-comprovantes
+  resources:
+    requests:
+      # Obrigatorio pelo schema do Kubernetes e IGNORADO na pratica: o EFS e
+      # elastico, cresce e encolhe sozinho. E uma das poucas linhas de YAML do
+      # ecossistema que existe so para satisfazer o validador.
+      storage: 5Gi

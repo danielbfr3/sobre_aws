@@ -1,0 +1,16 @@
+# Artefatos de build e de execucao.
+bin/
+obj/
+__pycache__/
+*.pyc
+.DS_Store
+
+# NOTA sobre o .env: ele E versionado, de proposito, para o repositorio ficar
+# legivel sem rodar nada - da para abrir e ver que forma tem o TOPIC_ARN que o
+# publisher recebe. Mas ele e REGRAVADO pelo infra/local/bootstrap.sh a cada
+# ./run.sh up, com os ARNs do emulador que acabou de subir. Nao edite na mao,
+# e nao se assuste se ele aparecer modificado depois de rodar o lab.
+#
+# Mesma ideia para o logs-do-lab.ndjson: a copia versionada e uma amostra para
+# a aba "Logs reais" do visualizador; o ./run.sh exportar-logs a substitui pela
+# sua.

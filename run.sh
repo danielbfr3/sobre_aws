@@ -17,7 +17,8 @@
 #   ./run.sh logs [nome] acompanha os logs
 #   ./run.sh reset       derruba tudo e APAGA o volume
 #
-#   ./run.sh build       compila os projetos .NET e as 3 imagens do cap. 07
+#   ./run.sh build       compila as 3 imagens do cap. 07 (e examples/lambda)
+#   ./run.sh roles       cria uma role por worker, de infra/iam/ (guia 01)
 #   ./run.sh diagnostico [python|go|dotnet]  qual provedor venceu (guia 03)
 #   ./run.sh segredos    [python|go|dotnet]  cache com TTL (guia 04)
 #   ./run.sh comparar    prova que as 3 linguagens geram o mesmo comprovante
@@ -97,6 +98,18 @@ case "$comando" in
     ./infra/local/bootstrap.sh
     ;;
 
+  roles)
+    # Cria UMA ROLE POR WORKER a partir dos JSONs de infra/iam/ (etapa 11).
+    #   ./run.sh roles             cria contra o Floci
+    #   ./run.sh roles --limpar    apaga o que criou
+    #
+    # Contra a AWS de verdade, chame o script direto com ACCOUNT_ID e OIDC_ID
+    # - o cabecalho dele mostra como.
+    shift || true
+    AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}" \
+      ./infra/aws/create-roles.sh "$@"
+    ;;
+
   workers)
     compose up -d --build publisher consumer-registro consumer-baixa consumer-rejeicao
     ok "workers no ar"
@@ -107,20 +120,25 @@ case "$comando" in
     ;;
 
   build)
-    # Compila TUDO. Os projetos .NET soltos precisam do dotnet na maquina;
-    # as tres imagens do capitulo 07 compilam DENTRO do Docker (build
-    # multi-estagio), entao nao exigem Python, Go nem dotnet instalados.
+    # Compila TUDO.
+    #
+    # As tres imagens do capitulo 07 compilam DENTRO do Docker (build
+    # multi-estagio) e nao exigem Python, Go nem dotnet instalados - e o
+    # caminho normal.
+    #
+    # O projeto de examples/lambda/ e o unico que precisa do dotnet na
+    # maquina: ele nao roda no lab (publicar exige conta AWS), existe para ser
+    # lido e compilado ao lado do consumer do capitulo 07. Repare que o
+    # .csproj dele LINKA o Comprovante.cs do worker em vez de duplicar.
     if command -v dotnet >/dev/null; then
-      for proj in src/Publisher src/Consumer \
-                  examples/dotnet-credenciais examples/secrets \
-                  examples/lambda; do
+      for proj in examples/lambda; do
         [[ -d "$proj" ]] || continue
         echo
         etapa "build $proj"
         if dotnet build "$proj" -v quiet --nologo; then ok "$proj"; else erro "$proj"; fi
       done
     else
-      aviso "dotnet nao encontrado - pulando os projetos .NET soltos"
+      aviso "dotnet nao encontrado - pulando examples/lambda (opcional)"
     fi
     echo
     etapa "build das imagens do capitulo 07 (python, go, dotnet)"
@@ -131,17 +149,16 @@ case "$comando" in
   diagnostico)
     # Mostra qual provedor da cadeia de credenciais venceu (guia 03).
     #
-    #   ./run.sh diagnostico            projeto .NET solto, se existir
+    #   ./run.sh diagnostico            igual a "python"
     #   ./run.sh diagnostico python     |
     #   ./run.sh diagnostico go         |  no container, sem toolchain local
     #   ./run.sh diagnostico dotnet     |
+    #
+    # RODE OS TRES. A ordem da cadeia NAO e a mesma nos tres SDKs, e e a
+    # etapa 15 do ROTEIRO - guia 07, secao 2.
     shift || true
-    LINGUAGEM="${1:-}"
-    if [[ -z "$LINGUAGEM" && -d examples/dotnet-credenciais ]] && command -v dotnet >/dev/null; then
-      dotnet run --project examples/dotnet-credenciais
-      exit $?
-    fi
-    case "${LINGUAGEM:-python}" in
+    LINGUAGEM="${1:-python}"
+    case "$LINGUAGEM" in
       python) compose run --rm -T consumer-registro python -u diagnostico.py ;;
       go)     compose run --rm -T consumer-baixa    /app/diagnostico ;;
       dotnet) compose run --rm -T consumer-rejeicao dotnet Lab.dll diagnostico ;;
@@ -150,17 +167,11 @@ case "$comando" in
     ;;
 
   segredos)
-    # Demo do cache com TTL contra o Floci (guia 04). Mesma logica do
-    # diagnostico: sem argumento usa o projeto .NET solto, se ele existir.
+    # Demo do cache com TTL contra o Floci (guia 04).
+    #   ./run.sh segredos [python|go|dotnet]   (sem argumento: python)
     shift || true
-    LINGUAGEM="${1:-}"
-    if [[ -z "$LINGUAGEM" && -d examples/secrets ]] && command -v dotnet >/dev/null; then
-      AWS_ENDPOINT_URL=http://localhost:4566 \
-      AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
-        dotnet run --project examples/secrets
-      exit $?
-    fi
-    case "${LINGUAGEM:-python}" in
+    LINGUAGEM="${1:-python}"
+    case "$LINGUAGEM" in
       python) compose run --rm -T consumer-registro python -u segredos.py ;;
       go)     compose run --rm -T consumer-baixa    /app/segredos ;;
       dotnet) compose run --rm -T consumer-rejeicao dotnet Lab.dll segredos ;;
@@ -243,6 +254,7 @@ case "$comando" in
 
   *)
     echo "uso: ./run.sh [up|verify|comprovantes|logs|build|bootstrap|workers|reset]"
+    echo "     ./run.sh roles       [--limpar]"
     echo "     ./run.sh diagnostico [python|go|dotnet]"
     echo "     ./run.sh segredos    [python|go|dotnet]"
     echo "     ./run.sh comparar"

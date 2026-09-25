@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicarApenasNoTopicoDeCobranca",
+      "Effect": "Allow",
+      "Action": ["sns:Publish"],
+      "Resource": "arn:aws:sns:us-east-1:111122223333:eventos-cobranca"
+    },
+    {
+      "Sid": "CifrarAMensagemAoPublicar",
+      "Effect": "Allow",
+      "Action": ["kms:GenerateDataKey", "kms:Encrypt", "kms:DescribeKey"],
+      "Resource": "arn:aws:kms:us-east-1:111122223333:key/EXAMPLE-KEY-ID",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "sns.us-east-1.amazonaws.com" }
+      }
+    }
+  ]
+}

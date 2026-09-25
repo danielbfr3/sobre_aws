@@ -1,8 +1,8 @@
 """
 Diagnostico da cadeia de credenciais - Python / botocore.
 
-O equivalente do examples/dotnet-credenciais do guia 03, em Python.
-Responde duas perguntas, nesta ordem:
+O equivalente, em Python, do examples/multilinguagem/dotnet/Diagnostico.cs
+do guia 03. Responde duas perguntas, nesta ordem:
 
     1. QUAL PROVEDOR DA CADEIA VENCEU?
     2. QUEM EU SOU, na visao da AWS?
@@ -73,11 +73,17 @@ def main() -> int:
         print(f"  {nome}={mostrado}")
 
     # O bug do guia 03 §2, detectado antes de qualquer chamada.
+    #
+    # ATENCAO ao texto: no botocore a variavel de ambiente vence mesmo, e por
+    # isso a afirmacao abaixo e categorica. NAO copie esta mensagem para o
+    # Diagnostico.cs: no AWS SDK for .NET a ordem e a INVERSA e o IRSA vence.
+    # A secao 2 do guia 07 poe as tres cadeias lado a lado.
     if presentes.get("AWS_ACCESS_KEY_ID") and presentes.get("AWS_ROLE_ARN"):
         print()
         print("  (!) AWS_ACCESS_KEY_ID e AWS_ROLE_ARN presentes ao mesmo tempo.")
-        print("      Variavel de ambiente vence IRSA na cadeia. "
-              "O IRSA esta sendo IGNORADO.")
+        print("      No botocore a variavel de ambiente vence o web identity,")
+        print("      entao o IRSA esta sendo IGNORADO aqui.")
+        print("      (No .NET seria o contrario - veja o guia 07 secao 2.)")
 
     # -----------------------------------------------------------------------
     secao("2. Qual provedor venceu")

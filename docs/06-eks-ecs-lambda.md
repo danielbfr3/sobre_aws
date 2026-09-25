@@ -107,7 +107,7 @@ A contrapartida: essa trust policy sozinha permite que **qualquer task da conta*
 
 Isso é o mínimo. Amarrar a uma task definition específica não é possível na trust policy — o isolamento no ECS vem de **quem pode fazer `ecs:RunTask` com aquela task definition e `iam:PassRole` daquela role**, o que é uma amarração no pipeline de deploy, não no runtime. Diferença conceitual relevante: no EKS o cluster te impede; no ECS é o processo de deploy que te impede.
 
-Ver `examples/ecs/`.
+Ver [`examples/ecs/`](../examples/ecs/).
 
 ---
 
@@ -199,7 +199,7 @@ Duas consequências que voltam adiante:
 Não existe abstração de PVC. O volume é declarado **inline na task definition**, o que é mais simples e menos portável.
 
 #### Efêmero
-<cite index="14-1">Tasks Fargate a partir da plataforma 1.40 vêm com 20 GiB de armazenamento efêmero</cite>, e <cite index="14-1">é possível configurar até 200 GiB pela opção de ephemeral storage — que continua sendo armazenamento não persistente</cite>. Some quando a task para.
+Tasks Fargate a partir da plataforma 1.4.0 vêm com 20 GiB de armazenamento efêmero, e é possível configurar até 200 GiB pela opção de *ephemeral storage* — que continua sendo armazenamento **não persistente**. Some quando a task para.
 
 #### EFS
 Declarado com `efsVolumeConfiguration`, com suporte a Access Point e TLS em trânsito. E aqui está a diferença que importa em relação ao EKS:
@@ -221,9 +221,9 @@ Com `iam: ENABLED`, **a task role precisa de permissão IAM para montar**:
 No EKS isso não existia. Se você migrar o worker de comprovantes do lab para ECS e esquecer essas duas ações, o container falha no mount e a task morre antes de logar qualquer coisa útil.
 
 #### EBS
-Novidade de 2024: <cite index="16-1">ECS e Fargate passaram a integrar com EBS, permitindo provisionar e anexar volumes EBS a tasks tanto no Fargate quanto no EC2 através das APIs do ECS</cite>. Os atributos do volume (tamanho, tipo, IOPS, throughput, chave KMS, snapshot de origem) vão no `RunTask`, `CreateService` ou `UpdateService`.
+Novidade de 2024: o ECS passou a integrar com EBS, permitindo provisionar e anexar volumes EBS a tasks tanto no Fargate quanto no EC2 através das APIs do ECS. Os atributos do volume (tamanho, tipo, IOPS, throughput, chave KMS, snapshot de origem) vão no `RunTask`, `CreateService` ou `UpdateService`.
 
-Duas restrições que definem o uso: <cite index="10-1">é 1 volume EBS por task, suportado para tasks Linux no Fargate</cite>, e <cite index="11-1">por padrão o ECS apaga o volume quando a task encerra</cite>. É o análogo do EBS no EKS — disco rápido de uma task só, não compartilhamento.
+Duas restrições que definem o uso: é **1 volume EBS por task**, suportado para tasks Linux no Fargate, e **por padrão o ECS apaga o volume quando a task encerra**. É o análogo do EBS no EKS — disco rápido de uma task só, não compartilhamento.
 
 O ECS também precisa de uma role de infraestrutura própria para criar e anexar esses volumes em seu nome. Mais uma role no mapa.
 
@@ -274,7 +274,7 @@ task-definition consumer-registro
 
 O código não muda. Nem uma linha. `Program.cs` continua sem credencial no construtor, e a cadeia padrão do SDK descobre o endpoint de credenciais do ECS sozinha.
 
-Ver `examples/ecs/task-definition-consumer-registro.json`.
+Ver [`examples/ecs/task-definition-consumer-registro.json`](../examples/ecs/task-definition-consumer-registro.json).
 
 ### Em Lambda
 
@@ -296,7 +296,7 @@ O que some do seu código: long polling, `DeleteMessage`, tratamento de erro do 
 
 **Idempotência continua obrigatória.** Event source mapping também é entrega *pelo menos uma vez*. A estratégia do lab — nome de arquivo derivado do hash do payload — continua valendo, com a ressalva de que em Lambda esse arquivo deveria estar no S3, não no `/tmp`.
 
-Ver `examples/lambda/Function.cs`.
+Ver [`examples/lambda/Function.cs`](../examples/lambda/Function.cs).
 
 ---
 
@@ -344,31 +344,34 @@ Quando algo falha, o serviço muda o formato do erro. Vale reconhecer:
 
 #### As duas roles
 
+Os comandos abaixo rodam **da raiz do repositório** — é de lá que os caminhos
+`file://examples/...` resolvem.
+
 ```bash
 # 1. execution role — puxa imagem, escreve log. Usada ANTES do seu código existir.
 #    Pode ser compartilhada entre os três consumers: ela não toca em nada de negócio.
 aws iam create-role \
   --role-name asa-dev-ecs-task-execution \
-  --assume-role-policy-document file://../examples/ecs/trust-policy-ecs-task.json
+  --assume-role-policy-document file://examples/ecs/trust-policy-ecs-task.json
 
 aws iam put-role-policy \
   --role-name asa-dev-ecs-task-execution \
   --policy-name execucao \
-  --policy-document file://../examples/ecs/policy-task-execution.json
+  --policy-document file://examples/ecs/policy-task-execution.json
 
 # 2. task role — usada pelo SEU CÓDIGO. Uma por worker, como no lab do EKS.
 aws iam create-role \
   --role-name asa-dev-cash-cobranca-consumer-registro \
-  --assume-role-policy-document file://../examples/ecs/trust-policy-ecs-task.json
+  --assume-role-policy-document file://examples/ecs/trust-policy-ecs-task.json
 
 aws iam put-role-policy \
   --role-name asa-dev-cash-cobranca-consumer-registro \
   --policy-name permissoes-consumer-registro \
-  --policy-document file://../examples/ecs/policy-task-role-consumer-registro.json
+  --policy-document file://examples/ecs/policy-task-role-consumer-registro.json
 
 # 3. registrar a task definition
 aws ecs register-task-definition \
-  --cli-input-json file://../examples/ecs/task-definition-consumer-registro.json
+  --cli-input-json file://examples/ecs/task-definition-consumer-registro.json
 ```
 
 As duas roles usam **a mesma trust policy**. O que as distingue é só o que cada uma permite fazer — e quem as usa.
@@ -400,12 +403,12 @@ Vale saber disso antes de afirmar que "no ECS é igual, só muda o YAML".
 ```bash
 aws iam create-role \
   --role-name asa-dev-cash-cobranca-lambda-registro \
-  --assume-role-policy-document file://../examples/lambda/trust-policy-lambda.json
+  --assume-role-policy-document file://examples/lambda/trust-policy-lambda.json
 
 aws iam put-role-policy \
   --role-name asa-dev-cash-cobranca-lambda-registro \
   --policy-name permissoes-lambda-registro \
-  --policy-document file://../examples/lambda/policy-lambda-consumer-registro.json
+  --policy-document file://examples/lambda/policy-lambda-consumer-registro.json
 ```
 
 #### Ligando a fila à função
@@ -464,8 +467,10 @@ Em [`../examples/`](../examples/):
 | `ecs/trust-policy-ecs-task.json` | `ecs-tasks.amazonaws.com` com condição de conta |
 | `ecs/policy-task-execution.json` | ECR + logs — usada pelo **agente** |
 | `ecs/policy-task-role-consumer-registro.json` | SQS + EFS — usada pelo **seu código** |
-| `lambda/Function.cs` | o handler; compare com `src/Consumer/QueueConsumer.cs` |
-| `lambda/Lambda.csproj` | linka `src/Consumer/Comprovante.cs` em vez de duplicar |
+| `lambda/trust-policy-lambda.json` | `lambda.amazonaws.com` — uma role, dois usuários |
+| `lambda/policy-lambda-consumer-registro.json` | o `sqs:ReceiveMessage` que o **seu handler nunca chama** |
+| `lambda/Function.cs` | o handler; compare com `multilinguagem/dotnet/Consumer.cs` e veja o que sumiu |
+| `lambda/Lambda.csproj` | **linka** o `Comprovante.cs` do worker em vez de duplicar |
 
 ---
 

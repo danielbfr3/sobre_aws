@@ -572,7 +572,7 @@ spec:
 
 ### 6.1 Com o volume montado (abordagem A): quase nada — e o "quase" é caro
 
-A promessa do CSI se cumpre: `/data` continua sendo um diretório, `Directory.GetFiles`, `os.listdir` e `os.ReadDir` continuam funcionando, e o `ComprovanteWriter` do lab não sabe que mudou de protocolo. Quatro comportamentos, porém, mudam — e três deles são novos em relação à lista do capítulo 07.
+A promessa do CSI se cumpre: `/data` continua sendo um diretório, `Directory.GetFiles`, `os.listdir` e `os.ReadDir` continuam funcionando, e o módulo de comprovante do lab não sabe que mudou de protocolo. Quatro comportamentos, porém, mudam — e três deles são novos em relação à lista do capítulo 07.
 
 #### (a) `link(2)`: a idempotência do lab está apoiada numa chamada que pode não existir
 
@@ -582,7 +582,7 @@ O capítulo 07 §5 conclui que a escrita atômica correta é *escrever num tempo
 
 Sobre SMB, `link(2)` **não é garantido**. O NTFS tem hard links e o cliente `cifs` do Linux implementa a operação para SMB2+, mas o resultado depende da versão do protocolo negociada, das opções de mount (`noserverino` mexe justamente na identificação de arquivos) e da configuração do servidor. **Não chute em nenhuma direção — sonde.**
 
-O lab já tem o lugar certo para isso: o `VerificarVolume` que grava e apaga um arquivo-sonda na subida do worker. Estenda a sonda para tentar o `link`:
+O lab já tem o lugar certo para isso: a sonda de volume que grava e apaga um arquivo de teste na subida do worker (`verificar_volume` no Python, `verificarVolume` no Go, `VerificarVolume` no .NET). Estenda a sonda para tentar o `link`:
 
 ```python
 # python — na subida, antes de consumir a primeira mensagem

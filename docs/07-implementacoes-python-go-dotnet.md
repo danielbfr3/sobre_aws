@@ -4,7 +4,12 @@ Os capítulos anteriores explicaram os mecanismos com exemplos em .NET. Este cap
 
 A tese em uma frase:
 
-> **A resolução de credencial não é assunto da sua linguagem. Os três SDKs implementam a mesma cadeia, com nomes diferentes.**
+> **Quase nada do que os capítulos 01 a 06 ensinam depende da linguagem — e o
+> "quase" tem um nome: a ordem da cadeia de credenciais, que os três SDKs
+> implementam com os mesmos elos e em ordens diferentes.**
+
+Essa segunda metade é o achado do capítulo, está na §2, e é verificável com um
+comando. A primeira metade é o resto dele.
 
 Pré-requisito: [`01-iam-explicado.md`](01-iam-explicado.md) e [`03-credenciais-no-dotnet.md`](03-credenciais-no-dotnet.md). Este capítulo é a versão poliglota do 03.
 
@@ -17,7 +22,7 @@ Antes, os três consumers rodavam a mesma imagem .NET. Agora rodam **três image
 | Serviço no compose | Linguagem | SDK | Fila |
 |---|---|---|---|
 | `consumer-registro` | Python 3.12 | boto3 / botocore | `cobranca-registro` |
-| `consumer-baixa` | Go 1.25 | `aws-sdk-go-v2` | `cobranca-baixa` |
+| `consumer-baixa` | Go 1.24 | `aws-sdk-go-v2` | `cobranca-baixa` |
 | `consumer-rejeicao` | .NET 10 | `AWSSDK` 3.7 | `cobranca-rejeicao` |
 | `publisher` | Python 3.12 | boto3 | — publica no SNS |
 
@@ -68,27 +73,58 @@ Nenhum dos três precisa da linguagem instalada na sua máquina: os `Dockerfile`
 
 ## 2. A cadeia de credenciais nos três SDKs
 
-Esta é a tabela que vale a leitura do capítulo. A **ordem é a mesma nos três**, o nome de cada elo é que muda:
+Esta é a tabela que vale a leitura do capítulo, e ela **não** diz o que a maioria
+dos textos sobre o assunto diz. Os três SDKs têm os mesmos elos, com nomes
+diferentes — mas **não na mesma ordem**:
 
-| Elo | Python (botocore) | Go (`aws-sdk-go-v2`) | .NET (`AWSSDK`) |
+| Elo | Python (botocore) | Go (`aws-sdk-go-v2`) | .NET (`AWSSDK` 3.7) |
 |---|---|---|---|
 | ponto de entrada | `Session().get_credentials()` | `config.LoadDefaultConfig()` | `FallbackCredentialsFactory.GetCredentials()` |
-| 1 — explícito no código | argumentos do `client()` | `config.WithCredentialsProvider` | construtor com `AWSCredentials` |
-| 2 — **variáveis de ambiente** | `method="env"` | `Source="EnvConfigCredentials"` | `EnvironmentVariablesAWSCredentials` |
-| 3 — perfil compartilhado | `shared-credentials-file` | `SharedConfigCredentials` | `SharedCredentialsFile` |
-| 4 — **web identity (IRSA)** | `assume-role-with-web-identity` | `WebIdentityCredentials` | `AssumeRoleWithWebIdentityCredentials` |
-| 5 — container (ECS / Pod Identity) | `container-role` | `EndpointCredentialsProvider` | `URIBasedRefreshingCredentialHelper` |
-| 6 — IMDS (role do nó) | `iam-role` | `EC2RoleProvider` | `DefaultInstanceProfileAWSCredentials` |
+| explícito no código | argumentos do `client()` | `config.WithCredentialsProvider` | construtor com `AWSCredentials` |
+| **variáveis de ambiente** | **1º** — `method="env"` | **1º** — `Source="EnvConfigCredentials"` | **3º** — `EnvironmentVariablesAWSCredentials` |
+| perfil compartilhado | 2º — `shared-credentials-file` | 2º — `SharedConfigCredentials` | **2º** — `BasicAWSCredentials` / `SessionAWSCredentials` |
+| **web identity (IRSA)** | 3º — `assume-role-with-web-identity` | 3º — `WebIdentityCredentials` | **1º** — `AssumeRoleWithWebIdentityCredentials` |
+| container (ECS / Pod Identity) | 4º — `container-role` | 4º — `EndpointCredentialsProvider` | 4º — `URIBasedRefreshingCredentialHelper` |
+| IMDS (role do nó) | 5º — `iam-role` | 5º — `EC2RoleProvider` | 5º — `DefaultInstanceProfileAWSCredentials` |
 
-Três consequências práticas, e as três valem para os três SDKs:
+> **Em Python e em Go, a variável de ambiente vence o IRSA. No .NET, o IRSA
+> vence a variável de ambiente.** E, no .NET, o perfil `~/.aws` também vence a
+> variável de ambiente — coisa que não acontece nos outros dois.
 
-**Variável de ambiente vence IRSA.** É o bug do capítulo 03 §2 e ele não é específico do .NET. Um `AWS_ACCESS_KEY_ID` esquecido num ConfigMap cala o IRSA em Python, em Go e em .NET exatamente da mesma forma — a cadeia para no elo 2 e nunca chega no 4.
+Essa é a diferença mais importante do capítulo, e é justamente a que um texto
+sobre "o mesmo worker em três linguagens" é tentado a varrer para debaixo do
+tapete. Ela tem consequência operacional direta:
 
-**A resolução é preguiçosa nos três.** Nenhum deles chama o STS na construção do client. O `AssumeRoleWithWebIdentity` sai na primeira chamada de verdade, e o arquivo do token é **relido a cada renovação** (o kubelet rotaciona aquele arquivo).
+**Um `AWS_ACCESS_KEY_ID` esquecido num ConfigMap quebra dois dos três workers.**
+O `consumer-registro` (Python) e o `consumer-baixa` (Go) passam a usar a
+credencial da variável e o IRSA é ignorado; o `consumer-rejeicao` (.NET)
+continua usando o IRSA e funcionando. O time vê "dois workers com
+`AccessDenied` e um saudável no mesmo cluster, com a mesma role" e procura a
+causa no lugar errado — na policy, no ServiceAccount, na trust policy —, porque
+a hipótese "a cadeia do SDK é diferente" nem passa pela cabeça de ninguém.
 
-**Nenhum dos três recebe credencial no construtor** — em nenhum arquivo deste lab. É isso que faz o mesmo binário rodar na sua máquina, no EKS, no ECS e na Lambda sem um `if`.
+E o inverso também acontece: alguém depura na máquina local com .NET, exporta
+`AWS_ACCESS_KEY_ID` no shell e não entende por que o programa continua falando
+com a conta do `[default]` do `~/.aws/credentials`.
+
+O que **é** igual nos três, e vale tanto quanto:
+
+**A resolução é preguiçosa.** Nenhum deles chama o STS na construção do client.
+O `AssumeRoleWithWebIdentity` sai na primeira chamada de verdade, e o arquivo do
+token é **relido a cada renovação** (o kubelet rotaciona aquele arquivo).
+
+**Nenhum dos três recebe credencial no construtor** — em nenhum arquivo deste
+lab. É isso que faz o mesmo binário rodar na sua máquina, no EKS, no ECS e na
+Lambda sem um `if`.
+
+**Os elos existentes são os mesmos.** Variável de ambiente, perfil, web
+identity, endpoint de container e IMDS aparecem nos três. Nenhum SDK tem um
+provedor que os outros não tenham; o que muda é a precedência.
 
 ### Vendo com os próprios olhos
+
+Não acredite na tabela acima — ela pode envelhecer. O ponto deste capítulo é
+que **medir custa um minuto**:
 
 ```bash
 ./run.sh diagnostico python
@@ -96,7 +132,7 @@ Três consequências práticas, e as três valem para os três SDKs:
 ./run.sh diagnostico dotnet
 ```
 
-Cada um imprime o elo vencedor no vocabulário do seu SDK. Rodando no compose, os três dizem a mesma coisa com palavras diferentes:
+Dentro do compose, onde só há variáveis de ambiente, os três concordam:
 
 ```
 --- 2. Qual provedor venceu                  (Python)
@@ -112,21 +148,47 @@ Cada um imprime o elo vencedor no vocabulário do seu SDK. Rodando no compose, o
   significa ....: variaveis de ambiente (AWS_ACCESS_KEY_ID...)
 ```
 
-E o experimento que importa — provocar o bug do IRSA silenciado, em qualquer uma das três:
+Agora o experimento que separa os três — simular o IRSA **junto** com a
+variável de ambiente, que é a situação do ConfigMap esquecido:
 
 ```bash
-docker compose run --rm \
-  -e AWS_ROLE_ARN=arn:aws:iam::111122223333:role/qualquer \
-  -e AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token-falso \
-  consumer-baixa /app/diagnostico
+for svc_cmd in "consumer-registro python -u diagnostico.py" \
+               "consumer-baixa /app/diagnostico" \
+               "consumer-rejeicao dotnet Lab.dll diagnostico"; do
+  docker compose run --rm \
+    -e AWS_ROLE_ARN=arn:aws:iam::111122223333:role/qualquer \
+    -e AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token-falso \
+    $svc_cmd 2>&1 | grep -A1 'Qual provedor venceu' || true
+done
 ```
 
+> O `|| true` está aí porque o diagnóstico do .NET termina com código 1: ele
+> chega à seção 3, tenta o `GetCallerIdentity` com o token falso e falha. É o
+> esperado — e é a prova de que ele realmente escolheu o web identity.
+
 ```
-  (!) AWS_ACCESS_KEY_ID e AWS_ROLE_ARN presentes ao mesmo tempo.
-      Variavel de ambiente vence IRSA na cadeia. O IRSA esta sendo IGNORADO.
+  method .......: env                                    (Python)  ← IRSA ignorado
+  Source .......: EnvConfigCredentials                   (Go)      ← IRSA ignorado
+  tipo .........: AssumeRoleWithWebIdentityCredentials   (.NET)    ← IRSA VENCEU
 ```
 
-O alerta é idêntico nos três porque **o problema é da cadeia, não da linguagem**.
+Os três programas imprimem, antes disso, um aviso de que as duas coisas estão
+presentes ao mesmo tempo — mas só o de Python e o de Go afirmam que o IRSA foi
+ignorado. O de .NET diz o contrário, porque no .NET é o contrário.
+
+Repare num detalhe que o experimento deixa à mostra: **o arquivo
+`/tmp/token-falso` não existe dentro do container**, e mesmo assim o .NET
+escolheu o provedor de web identity. A escolha do elo é feita pela *presença
+das variáveis*, não pela leitura do token — que só acontece na primeira chamada
+de verdade (é a "resolução preguiçosa" de que falamos acima). Por isso o
+diagnóstico do .NET só quebra na seção 3, no `GetCallerIdentity`. No cluster,
+esse mesmo atraso é o que faz um IRSA mal configurado subir um pod saudável que
+falha na primeira mensagem, e não na inicialização.
+
+**A lição não é decorar a ordem.** É que "a cadeia de credenciais é igual em
+todo lugar" é uma daquelas crenças que sobrevivem por nunca serem testadas, e
+que o teste é barato. Quando alguém do time disser "isso é coisa do SDK de
+vocês", a resposta certa não é "não é" — é `./run.sh diagnostico`.
 
 ---
 
@@ -359,6 +421,34 @@ Tentativa.........: 1
 
 Isso é o que transforma um arquivo num ponto de partida. Você acha um comprovante estranho no volume, lê o Trace ID, roda `./run.sh trace <id>` e tem a história inteira — quem publicou, quando, em que tentativa, quanto demorou cada salto. Sem esse campo, o artefato é um beco sem saída.
 
+> **E aqui está a razão de o `Trace ID` existir em vez de se usar o
+> `Message ID`.** Compare os dois numa cadeia de verdade:
+>
+> ```
+> 11:03:07.767226  publish.ok            publisher/python
+>                    #42 … messageId=681f53ce-f364-48fd-87bd-468d12839205
+> …
+> Message ID........: 6686d952-fb5a-4aa2-b122-db30e0b8e431   ← no comprovante
+> ```
+>
+> **São ids diferentes, e os dois estão certos.** O publisher registra o
+> `MessageId` que o **SNS** devolveu no `Publish`; o comprovante registra o
+> `MessageId` que a **SQS** atribuiu à mensagem entregue. O SNS cria um id
+> novo por entrega — e com três subscriptions, um `Publish` vira três ids de
+> SQS distintos.
+>
+> Consequência prática: **não dá para correlacionar publisher e consumer pelo
+> `MessageId`.** Quem tenta (e muita gente tenta, porque o campo está bem ali)
+> conclui que "o log está errado" ou que "a mensagem se perdeu". O `traceId`
+> existe exatamente para atravessar essa fronteira, porque ele é *seu* e o
+> broker não mexe nele.
+>
+> O caso do `trace_do_message_id` logo acima é o mesmo argumento pelo avesso:
+> quando não há `traceId`, o melhor substituto é o `MessageId` **da SQS**, que
+> é estável entre reentregas da mesma mensagem — mas que não alcança o
+> publisher, e por isso aquelas cadeias começam em `mensagem.recebida`, nunca
+> em `publish.iniciado`.
+
 **Uma consequência que parece bug e não é:** republicar o mesmo payload gera um trace **novo**, mas o comprovante **não é reescrito** (é o que a idempotência garante). Então o arquivo guarda para sempre a cadeia da *primeira* gravação, e o segundo trace termina em `comprovante.duplicado` apontando para um arquivo cujo Trace ID é outro. Está correto: o documento registra quem o criou, não quem tentou recriá-lo.
 
 ### Visualizar
@@ -420,7 +510,7 @@ O que **não** varia com a escolha — e é o motivo deste capítulo — é tudo
 |---|---|---|
 | **As três são a mesma** | `./run.sh comparar` | mesmo hash, mesmo nome de arquivo, mesmos 1086 bytes |
 | **Cadeia de credenciais** | `./run.sh diagnostico {python,go,dotnet}` | três vocabulários, uma cadeia |
-| **IRSA silenciado** | o `docker compose run` da seção 2 | o alerta é idêntico nos três |
+| **IRSA silenciado** | o laço da seção 2 | Python e Go ignoram o IRSA; **o .NET não** — a ordem da cadeia difere |
 | **Cache de segredo** | `./run.sh segredos {python,go,dotnet}` | 5 leituras, 1 ida à AWS, nos três |
 | **DLQ** | mande `isto-nao-e-json` para as três filas | as três recusam o payload e a mensagem vai para a DLQ após 3 tentativas |
 | **Volume compartilhado** | `docker compose exec consumer-registro ls /data/comprovantes/` | o worker Python enxerga o que Go e .NET escreveram |
@@ -428,7 +518,7 @@ O que **não** varia com a escolha — e é o motivo deste capítulo — é tudo
 | **A cadeia até a DLQ** | `./run.sh trace --dlq` | 3 tentativas, **um** trace — porque ele é derivado do MessageId |
 | **Do artefato ao log** | leia o `Trace ID` de um comprovante e passe para `./run.sh trace` | o circuito fecha |
 | **Ver no desenho** | `./run.sh exportar-logs` → aba "Logs reais" do visualizador | os mesmos caminhos, com tempo real |
-| **Trocar de linguagem** | veja a seção 10 | o `verify` continua passando |
+| **Trocar de linguagem** | a subseção logo abaixo | o `verify` continua passando |
 
 ### Provar que a linguagem é intercambiável
 
@@ -462,6 +552,8 @@ docker compose up -d --build consumer-rejeicao
 | `permission denied` em `/data` | qualquer | uid da imagem diferente do dono do volume — é POSIX, não IAM (guia 06) |
 | cadeia do trace pára no `publish.ok` | qualquer | faltou `MessageAttributeNames` no `ReceiveMessage` |
 | cada tentativa da mesma mensagem tem trace diferente | qualquer | trace sorteado no receive em vez de derivado do `MessageId` |
+| dois workers com `AccessDenied` e um saudável, mesma role | Python/Go vs .NET | env var no ambiente: ela vence o IRSA em Python e Go, e perde no .NET (§2) |
+| `export AWS_ACCESS_KEY_ID` ignorado na máquina local | .NET | o perfil `~/.aws` vence a variável de ambiente no .NET (§2) |
 | eventos fora de ordem na cadeia | qualquer | `ts` com 3 casas decimais; o `sort` desempata em ordem alfabética |
 | idempotência parou de funcionar ao adicionar trace | qualquer | o `traceId` foi para o corpo da mensagem, e o hash é do corpo |
 | `/data/logs` vazio | qualquer | o serviço não monta o volume (o publisher precisa montar) |

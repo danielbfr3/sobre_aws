@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LabLambda</AssemblyName>
+    <RootNamespace>LabLambda</RootNamespace>
+    <!-- Sem OutputType Exe: uma Lambda de handler de classe e uma BIBLIOTECA.
+         Quem tem Main e o runtime da AWS, nao voce. -->
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <AWSProjectType>Lambda</AWSProjectType>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- ===================================================================
+       O PONTO DESTE ARQUIVO.
+
+       As regras do comprovante NAO sao duplicadas aqui: os dois .cs abaixo
+       sao LINKADOS do worker do lab. E o mesmo codigo, compilado duas vezes.
+
+       Isso importa porque o nome do arquivo (a chave de idempotencia) deriva
+       do hash do payload. Se a Lambda tivesse a propria copia de
+       Comprovante.cs, as duas versoes divergiriam no primeiro ajuste e a
+       migracao de EKS para Lambda passaria a reprocessar tudo que ja tinha
+       sido gravado - silenciosamente.
+
+       O capitulo 07 secao 4 faz o mesmo argumento entre LINGUAGENS. Aqui ele
+       vale entre PLATAFORMAS.
+       =================================================================== -->
+  <ItemGroup>
+    <Compile Include="../multilinguagem/dotnet/Comprovante.cs" Link="Comprovante.cs" />
+    <Compile Include="../multilinguagem/dotnet/Log.cs" Link="Log.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Amazon.Lambda.Core" Version="2.*" />
+    <PackageReference Include="Amazon.Lambda.SQSEvents" Version="2.*" />
+    <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" Version="2.*" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.*" />
+  </ItemGroup>
+
+  <!-- Nota de publicacao, e ela e real:
+
+       O runtime gerenciado da Lambda acompanha as versoes LTS do .NET com
+       atraso. Se `net10.0` ainda nao estiver disponivel como runtime
+       gerenciado quando voce for publicar, as saidas sao duas: baixar o
+       TargetFramework para a LTS suportada (e ai o Log.cs precisa trocar
+       System.Threading.Lock por um `object` comum, porque Lock e .NET 9+), ou
+       publicar como IMAGEM DE CONTAINER, que aceita qualquer runtime.
+
+       Este projeto existe para ser lido e compilado. Publicar exige conta
+       AWS - e a decisao acima. -->
+
+</Project>

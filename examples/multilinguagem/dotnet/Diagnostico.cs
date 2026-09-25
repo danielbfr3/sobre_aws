@@ -31,7 +31,12 @@ public static class Diagnostico
         ["URIBasedRefreshingCredentialHelper"] = "endpoint de container (ECS ou EKS Pod Identity)",
         ["GenericContainerCredentials"] = "endpoint de container (ECS ou EKS Pod Identity)",
         ["DefaultInstanceProfileAWSCredentials"] = "IMDS - a role do NO EC2, nao a do seu workload",
-        ["BasicAWSCredentials"] = "credencial fixa passada no codigo",
+        // BasicAWSCredentials e o que a cadeia devolve quando o PERFIL
+        // (~/.aws/credentials ou AWS_PROFILE) vence - nao quando alguem passou
+        // credencial no construtor. Rotular isso de "credencial no codigo"
+        // manda o leitor procurar no lugar errado.
+        ["BasicAWSCredentials"] = "perfil do ~/.aws (ele vence env var no .NET!)",
+        ["SessionAWSCredentials"] = "perfil do ~/.aws com session token",
     };
 
     private static readonly string[] Interessantes =
@@ -66,13 +71,24 @@ public static class Diagnostico
             Console.WriteLine($"  {nome}={mostrado}");
         }
 
-        // O bug do guia 03 §2, detectado antes de qualquer chamada.
+        // O guia 03 §2, e a diferenca que este programa existe para mostrar.
+        //
+        // Em Python e em Go, com estas duas variaveis presentes, a cadeia para
+        // na variavel de ambiente e o IRSA e ignorado. NO .NET E O CONTRARIO:
+        // a FallbackCredentialsFactory testa o web identity ANTES do perfil e
+        // das variaveis de ambiente, entao o IRSA vence.
+        //
+        // Por isso a mensagem aqui NAO afirma que o IRSA foi ignorado - ela
+        // manda olhar a secao 2 logo abaixo, que diz quem venceu de verdade.
+        // Uma ferramenta de diagnostico que contradiz a propria saida duas
+        // linhas depois e pior que nenhuma.
         if (presentes.ContainsKey("AWS_ACCESS_KEY_ID") && presentes.ContainsKey("AWS_ROLE_ARN"))
         {
             Console.WriteLine();
             Console.WriteLine("  (!) AWS_ACCESS_KEY_ID e AWS_ROLE_ARN presentes ao mesmo tempo.");
-            Console.WriteLine("      Variavel de ambiente vence IRSA na cadeia. " +
-                              "O IRSA esta sendo IGNORADO.");
+            Console.WriteLine("      Em Python e Go isso silencia o IRSA. No .NET, NAO: aqui o");
+            Console.WriteLine("      web identity vem ANTES na cadeia. Veja a secao 2 abaixo");
+            Console.WriteLine("      para saber quem venceu - e o guia 07 secao 2 para o porque.");
         }
 
         // ---------------------------------------------------------------
@@ -100,6 +116,23 @@ public static class Diagnostico
         // renovavel num processo que vive semanas termina em ExpiredToken.
         var renovavel = credenciais is RefreshingAWSCredentials;
         Console.WriteLine($"  renovavel ....: {(renovavel ? "sim" : "nao (credencial estatica)")}");
+
+        if (tipo == "AssumeRoleWithWebIdentityCredentials"
+            && presentes.ContainsKey("AWS_ACCESS_KEY_ID"))
+        {
+            Console.WriteLine();
+            Console.WriteLine("  (!) O IRSA venceu APESAR de AWS_ACCESS_KEY_ID estar definida.");
+            Console.WriteLine("      Isto e especifico do .NET. O mesmo ambiente, em Python ou");
+            Console.WriteLine("      Go, teria parado na variavel de ambiente. Guia 07 secao 2.");
+        }
+
+        if (tipo is "BasicAWSCredentials" or "SessionAWSCredentials"
+            && presentes.ContainsKey("AWS_ACCESS_KEY_ID"))
+        {
+            Console.WriteLine();
+            Console.WriteLine("  (!) O perfil ~/.aws venceu a variavel de ambiente que voce");
+            Console.WriteLine("      exportou. Tambem especifico do .NET.");
+        }
 
         if (tipo == "DefaultInstanceProfileAWSCredentials")
         {
