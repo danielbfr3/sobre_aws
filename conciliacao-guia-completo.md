@@ -82,10 +82,12 @@ sequenceDiagram
     participant S as Seu sistema
     participant B as Banco
 
+    Note over C,B: Sexta, 28/08/2026
     C->>S: Remessa: boleto de R$ 938,50<br/>(nosso número 000000012345)
     S->>S: Status Incluído (1)
     S-->>C: Parcial das 9h: recebi, está na fila
     S->>B: Executa
+    Note over C,B: Segunda, 31/08/2026 — D+1 do boleto
     B-->>S: Retorno: ocorrência 06 (liquidação)<br/>valor efetivado R$ 937,50
     S->>S: Casamento: divergência de R$ 1,00<br/>dentro da tolerância → Conciliado
     S->>S: Status Finalizado (6), VersãoEstado 3
@@ -95,6 +97,18 @@ sequenceDiagram
     S->>S: Linha compensatória de -R$ 938,50<br/>Status volta a Processando, VersãoEstado 4
     S-->>C: Novo retorno: ocorrência de devolução
 ```
+
+A linha do tempo, que todas as caixas respeitam:
+
+| Quando | O que acontece | Onde no guia |
+|---|---|---|
+| Sexta, 28/08, manhã | Remessa entra; boleto nasce `Incluído (1)` | 5.1 |
+| Sexta, 28/08, 9h | Parcial de recibo: "recebi, está na fila" | 9.2 |
+| Segunda, 31/08, 9h | Nada voltou ainda: **só interno**, mas `VencendoHoje` | 8.4 |
+| Segunda, 31/08, 13h | Chega o arquivo do banco, 412 linhas | 5.8 |
+| Segunda, 31/08, 13h58 | Casamento: `Conciliado`, status vai a `Finalizado (6)` | 6.10 e 6.11 |
+| Segunda, 31/08, 14h | Parcial com NSA 42; publicação | 11.4 e 12.4 |
+| ~40 dias depois | MED: linha compensatória, volta a `Processando` | 14.1 |
 
 Se você ler só as caixas do fio condutor, do capítulo 5 ao 14, terá a história
 completa de um pagamento. Cada capítulo mostra o mesmo item na sua etapa.
@@ -256,7 +270,12 @@ que não têm relação entre si, e confundi-los é a origem de bugs difíceis:
 | Conceito | Onde vive | Valores |
 |---|---|---|
 | **`CodigoStatus` do pagamento** | coluna de `Pagamento.Boleto`; é a máquina de estados da seção 9.1 | 1 Incluído, 2 Processando, 3 Rejeitado, 4 Cancelado, 5 Erro, 6 Finalizado, 7 Pendente Pix URL, 8 Processando Pix URL |
-| **`Classificacao` do item conciliado** | coluna de `Conciliacao.ItemConciliado`; é o veredicto do motor de casamento | 1 Conciliado, 2 Divergência de valor, 3 Só interno, 4 Só externo, 5 Duplicado, 6 Revertido |
+| **`Classificacao` do item conciliado** | coluna de `Conciliacao.ItemConciliado`; é o veredicto do casamento | 1 Conciliado, 2 Divergência de valor, 3 Só interno, 4 Só externo, 5 Duplicado, 6 Revertido, 7 Ocorrência desconhecida |
+
+Das sete classificações, **o motor do capítulo 6 produz cinco** (1 a 5). As duas
+últimas nascem fora dele: a **6** é gravada pela reversão do capítulo 14 e a **7**
+pela regra do código desconhecido (7.4). Elas moram no mesmo enum porque moram na
+mesma coluna.
 
 Para não repetir o erro comum de chamar os dois de `Status`, a coluna e o enum da
 segunda família se chamam **`Classificacao`** e **`ClassificacaoConciliacao`** no
@@ -272,7 +291,17 @@ public enum ClassificacaoConciliacao : short
     SoInterno        = 3,
     SoExterno        = 4,
     Duplicado        = 5,
-    Revertido        = 6    // linha compensatória; ver capítulo 14
+    Revertido        = 6,   // linha compensatória; ver capítulo 14
+    OcorrenciaDesconhecida = 7   // código sem tradução no De/Para; ver 7.4
+}
+
+/// As três formas de pagamento de 2.3. A régua de prazo do capítulo 8
+/// tem um prazo por forma, e é por isso que ela precisa deste tipo.
+public enum FormaPagamento : short
+{
+    Pix    = 1,
+    Ted    = 2,
+    Boleto = 3
 }
 
 /// Qual chave produziu o casamento. Guardar isso é o que responde
@@ -425,6 +454,11 @@ pede uma ação diferente:
 | **Só externo** | Evento que você não capturou | Investigar sempre; pode ser dinheiro entrando sem dono |
 | **Duplicado** | Contraparte reenviou o arquivo | Ignorar a segunda, alertar |
 
+São **cinco saídas do motor**. O enum de 2.7 tem sete valores porque duas
+classificações são gravadas por outras partes do pipeline — `Revertido` pela
+reversão (capítulo 14) e `OcorrenciaDesconhecida` pelo De/Para (7.4). Elas não
+aparecem nesta tabela porque o motor de casamento não as produz.
+
 "Só interno" é ambíguo de propósito: pode ser um pagamento que legitimamente
 ainda não liquidou (se a sua janela é D+0 e o prazo é D+1) ou um pagamento
 perdido. O motor não tem como saber — quem decide é a **régua de prazo**, que o
@@ -522,7 +556,9 @@ flowchart LR
 **Leia a seta sólida com atenção:** o que dispara a geração do retorno é a
 **mudança de status do pagamento**, não a gravação do resultado da conciliação.
 A tabela `ItemConciliado` (linha tracejada) é a trilha de auditoria e a fila de
-tratamento humano; a geração nunca a lê. Confundir os dois leva a um desenho em
+tratamento humano; a geração nunca a lê. O ponto exato em que o veredicto da
+conciliação vira status do pagamento — e portanto a única costura entre a linha
+tracejada e a sólida — está na seção **6.11**. Confundir os dois leva a um desenho em
 que o retorno depende de ter havido arquivo da contraparte — e aí o status
 `Incluído`, que nasce da remessa e não de conciliação nenhuma, nunca é reportado.
 
@@ -676,9 +712,24 @@ SET    m.DataInicio = SYSUTCDATETIME(),
        m.Tentativas = m.Tentativas + 1
 OUTPUT inserted.MensagemID, inserted.ChaveParticao, inserted.Payload, inserted.Tentativas
 FROM   Fila.Mensagem m WITH (READPAST, UPDLOCK, ROWLOCK)
-WHERE  m.DataFim IS NULL
+WHERE  m.Tipo        = @tipo            -- primeira coluna de IX_Mensagem_Pendentes
+  AND  m.DataFim IS NULL
   AND  m.DataInicio IS NULL
   AND  m.DisponivelEm <= SYSUTCDATETIME();
+```
+
+Duas coisas que esse comando **não** garante, e que o consumidor precisa cobrir:
+
+- **Ele não devolve as 20 mensagens em ordem.** `UPDATE TOP (n)` não aceita
+  `ORDER BY`. Ordene o lote por `MensagemID` no .NET antes de processar.
+- **Ele não impede que duas mensagens do mesmo cliente caiam no mesmo lote.**
+  Como a ordem por cliente importa (o NSA é serial, capítulo 16), processe o lote
+  agrupando por `ChaveParticao` e, dentro de cada grupo, em sequência:
+
+```csharp
+foreach (var grupo in lote.OrderBy(m => m.MensagemId).GroupBy(m => m.ChaveParticao))
+    foreach (var mensagem in grupo)          // dentro do cliente: em ordem, uma por vez
+        await ProcessarAsync(mensagem, ct);  // entre clientes: pode paralelizar (16.3)
 ```
 
 | | Tabela de fila | Service Broker | Broker externo (SQS/RabbitMQ) |
@@ -885,6 +936,8 @@ CREATE TABLE Conciliacao.ArquivoProcessado
     ArquivoID        UNIQUEIDENTIFIER NOT NULL,
     NomeOriginal     VARCHAR(250)     NOT NULL,
     ClienteDocumento VARCHAR(20)      NOT NULL,   -- um arquivo, um cliente: ver 5.4
+    CodigoBanco      CHAR(3)          NOT NULL,   -- de quem veio: ver 7.2
+    VersaoLayout     VARCHAR(10)      NOT NULL,   -- em que layout: ver 7.2
     QuantidadeLinhas INT              NULL,       -- só se conhece depois do parse
     DataCriacao      DATETIME2(7)     NOT NULL CONSTRAINT DF_ArqProc_Data DEFAULT SYSUTCDATETIME(),
     DataConclusao    DATETIME2(7)     NULL,       -- nula = ingestão em andamento ou morta
@@ -895,8 +948,14 @@ CREATE TABLE Conciliacao.ArquivoProcessado
 -- O resto do pipeline procura por ArquivoID, não por hash.
 CREATE UNIQUE INDEX UX_ArqProc_ArquivoID
     ON Conciliacao.ArquivoProcessado (ArquivoID)
-    INCLUDE (ClienteDocumento);
+    INCLUDE (ClienteDocumento, CodigoBanco, VersaoLayout);
 ```
+
+**`CodigoBanco` e `VersaoLayout` não são enfeite de relatório.** O De/Para do
+capítulo 7 é chaveado por eles: o `06` do banco 341 e o `06` do banco 001 são
+coisas diferentes. Quem sabe de qual banco veio o arquivo é a ingestão — pela
+origem, pelo convênio ou pelo próprio header — e é aqui que essa informação
+precisa ficar gravada, senão toda tradução daqui para a frente vira adivinhação.
 
 Fazer o hash ser a PK não é detalhe estético: é o que faz duas instâncias em
 corrida colidirem no banco em vez de duplicarem lançamento. A segunda recebe
@@ -906,9 +965,16 @@ erro 2627 e vira aviso em log.
 var conteudo = await File.ReadAllBytesAsync(caminho, ct);
 var md5 = Convert.ToHexString(MD5.HashData(conteudo)).ToLowerInvariant();
 
+// O hash é do byte a byte; o parser trabalha sobre o texto.
+// CNAB é ASCII: Latin1 nunca falha e nunca troca caractere por '?'.
+var texto = System.Text.Encoding.Latin1.GetString(conteudo);
+
 try
 {
-    await RegistrarArquivoAsync(md5, arquivoId, nome, clienteDocumento, ct);
+    // origem.CodigoBanco e origem.VersaoLayout vêm do convênio daquela
+    // pasta/fila de entrada. É o que o De/Para vai consultar depois (7.2).
+    await RegistrarArquivoAsync(md5, arquivoId, nome, clienteDocumento,
+                                origem.CodigoBanco, origem.VersaoLayout, ct);
 }
 catch (SqlException ex) when (ex.Number is 2627 or 2601)
 {
@@ -1275,9 +1341,9 @@ flowchart TD
     V -->|não| D["Divergência de valor"]
 ```
 
-**O fluxograma tem quatro saídas, e as classificações são cinco.** A quinta,
-**"só interno"**, não é decidida aqui: ela só existe **depois do laço**, quando
-se varre o conjunto de internos e se separam os que nenhuma linha externa
+**O fluxograma tem quatro saídas, e o motor produz cinco classificações.** A
+quinta, **"só interno"**, não é decidida aqui: ela só existe **depois do laço**,
+quando se varre o conjunto de internos e se separam os que nenhuma linha externa
 consumiu. Não há como um desenho por linha externa produzi-la — e é justamente
 por isso que o motor da seção 6.5 termina com um segundo `foreach`.
 
@@ -1383,14 +1449,29 @@ public sealed class MotorDeCasamento(PoliticaTolerancia politica)
         }
 
         // A quinta classificação, que só existe depois do laço (ver 6.3).
-        foreach (var interno in internos.Where(i => !consumidos.Contains(i.PagamentoId)))
+        // Só vale para quem AINDA ESPERA desfecho: um pagamento já terminal que
+        // não apareceu neste arquivo não é "só interno", é apenas um pagamento
+        // que não estava neste arquivo. Sem esse filtro, cada arquivo recebido
+        // geraria uma pendência para cada pagamento aberto ou fechado do cliente.
+        foreach (var interno in internos.Where(i => !consumidos.Contains(i.PagamentoId) && EmTransito(i)))
             itens.Add(new ItemConciliado(ClassificacaoConciliacao.SoInterno, TipoChave.Nenhuma, interno, null,
                 Dinheiro.Zero, "Sem ocorrência correspondente no arquivo"));
 
         return new ResultadoConciliacao(itens);
     }
+
+    /// 1 Incluído, 2 Processando, 7 e 8 Pix URL: os status que ainda esperam
+    /// ocorrência (9.1). É para isto que ItemInterno carrega o CodigoStatus.
+    private static bool EmTransito(ItemInterno i) => i.CodigoStatus is 1 or 2 or 7 or 8;
 }
 ```
+
+> **Por que os terminais continuam na lista de entrada, então?** Porque eles
+> precisam continuar **casáveis**: a devolução que chega quarenta dias depois
+> (capítulo 14) traz uma ocorrência para um pagamento já `Finalizado`. Se ele não
+> estivesse entre os internos, a reversão viraria "só externo" e o histórico se
+> perderia. A regra, portanto, tem dois lados: **todo mundo casa, só quem está em
+> trânsito vira "só interno"**.
 
 Três propriedades importantes desse desenho:
 
@@ -1538,15 +1619,26 @@ locks — sem ele, um erro no meio do procedimento pode devolver o controle ao
 ```sql
 CREATE OR ALTER PROCEDURE Conciliacao.ExecutarCasamento
     @ArquivoID                  UNIQUEIDENTIFIER,
-    @ToleranciaAbsolutaCentavos BIGINT = 1
+    @ToleranciaAbsolutaCentavos BIGINT = 1,
+    -- Janela de candidatos internos. Precisa ser MAIOR que o maior prazo de
+    -- contestação (MED: 80 dias), pela mesma razão da retenção em 10.7.
+    @JanelaCandidatosDias       INT    = 120
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
     -- Um arquivo, um cliente (5.4): resolve-se uma vez, sem DISTINCT.
-    DECLARE @ClienteDocumento VARCHAR(20) =
-        (SELECT ClienteDocumento FROM Conciliacao.ArquivoProcessado WHERE ArquivoID = @ArquivoID);
+    -- Banco e layout vêm junto: sem eles, o De/Para não sabe o que é o '06'.
+    DECLARE @ClienteDocumento VARCHAR(20),
+            @CodigoBanco      CHAR(3),
+            @VersaoLayout     VARCHAR(10);
+
+    SELECT @ClienteDocumento = ClienteDocumento,
+           @CodigoBanco      = CodigoBanco,
+           @VersaoLayout     = VersaoLayout
+    FROM   Conciliacao.ArquivoProcessado
+    WHERE  ArquivoID = @ArquivoID;
 
     IF @ClienteDocumento IS NULL
         THROW 50001, 'Arquivo não registrado em ArquivoProcessado.', 1;
@@ -1566,19 +1658,23 @@ BEGIN
         IdentificadorExterno VARCHAR(50)      NULL,
         NossoNumero          VARCHAR(50)      NULL,
         DataPrevista         DATE             NOT NULL,
-        ValorSolicitadoCent  BIGINT           NOT NULL
+        ValorSolicitadoCent  BIGINT           NOT NULL,
+        CodigoStatus         SMALLINT         NOT NULL
     );
 
+    --    O recorte é por TEMPO, não por status: um pagamento já Finalizado
+    --    precisa continuar casável, senão a devolução do capítulo 14 nunca
+    --    encontra o lançamento original. Quem o status recorta é o passo 7.
     INSERT INTO #Internos
     SELECT p.BoletoID, p.ClienteDocumento, i.IdentificadorExterno, i.NossoNumero,
            CAST(i.DataVencimento AS date),
            -- Seguro porque ValorPagamento é decimal(18,2). Ver o aviso em 6.2.
-           CAST(ROUND(i.ValorPagamento * 100, 0) AS bigint)
+           CAST(ROUND(i.ValorPagamento * 100, 0) AS bigint),
+           p.CodigoStatus
     FROM   Pagamento.Boleto p
     JOIN   Pagamento.BoletoInfo i ON i.BoletoID = p.BoletoID
     WHERE  p.ClienteDocumento = @ClienteDocumento
-      AND  NOT EXISTS (SELECT 1 FROM Conciliacao.ItemConciliado c
-                       WHERE c.PagamentoID = p.BoletoID AND c.Classificacao = 1);
+      AND  p.DataAtualizacao >= DATEADD(day, -@JanelaCandidatosDias, SYSUTCDATETIME());
 
     CREATE INDEX IX_I_Forte    ON #Internos (IdentificadorExterno);
     CREATE INDEX IX_I_Composta ON #Internos (NossoNumero);
@@ -1646,7 +1742,9 @@ BEGIN
                ELSE 0 END
     FROM   #Pares p
     LEFT   JOIN Conciliacao.MapaOcorrencia m
-           ON  m.Direcao          = 'E'
+           ON  m.CodigoBanco      = @CodigoBanco
+           AND m.VersaoLayout     = @VersaoLayout
+           AND m.Direcao          = 'E'
            AND m.CodigoOcorrencia = p.CodigoOcorrencia
            AND m.ValorVariavel    = 1
            AND m.VigenciaFim IS NULL;
@@ -1686,20 +1784,32 @@ BEGIN
     WHERE  s.ArquivoID = @ArquivoID
       AND  NOT EXISTS (SELECT 1 FROM #Pares p WHERE p.StagingID = s.StagingID);
 
-    -- 7) SÓ INTERNO: internos que ninguém reclamou
+    -- 7) SÓ INTERNO: internos EM TRÂNSITO que ninguém reclamou.
+    --    O filtro de status espelha o EmTransito do motor em C# (6.5): um
+    --    pagamento já terminal que não apareceu neste arquivo não é pendência.
     INSERT INTO Conciliacao.ItemConciliado
         (ArquivoID, ClienteDocumento, PagamentoID, StagingID, Classificacao, ChaveUsada,
          ValorSolicitadoCent, ValorEfetivadoCent, DiferencaCent, Motivo)
     SELECT @ArquivoID, @ClienteDocumento, n.PagamentoID, NULL, 3, 0,
            n.ValorSolicitadoCent, NULL, 0, 'Sem ocorrência correspondente no arquivo'
     FROM   #Internos n
-    WHERE  NOT EXISTS (SELECT 1 FROM #Pares p
+    WHERE  n.CodigoStatus IN (1, 2, 7, 8)
+      AND  NOT EXISTS (SELECT 1 FROM #Pares p
                        WHERE p.PagamentoID = n.PagamentoID AND p.OrdemInterno = 1);
 
     COMMIT TRANSACTION;
 END
 GO
 ```
+
+**Os dois recortes do passo 1 merecem ser lidos juntos**, porque errar qualquer
+um deles produz um sintoma que só aparece semanas depois:
+
+| Se você recortar por… | O que quebra |
+|---|---|
+| **nada** (todos os pagamentos do cliente) | Cada arquivo recebido gera um "só interno" para cada pagamento da história do cliente. A fila de pendências vira ruído e ninguém olha mais |
+| **`Classificacao <> 1`** (só os ainda não conciliados) | A devolução que chega em D+40 não acha o pagamento já conciliado e vira "só externo". O capítulo 14 deixa de funcionar |
+| **tempo para casar, status para pendenciar** | É o que o procedimento faz: todo mundo da janela casa, mas só quem está em trânsito vira pendência |
 
 **As cinco classificações saem daqui**, iguais às do motor em C#. Isso não é
 capricho de simetria: é o que torna possível o teste de comparação entre
@@ -1792,9 +1902,10 @@ CREATE INDEX IX_IC_Pendencias
 ```
 
 > **Lembrete de vocabulário.** `Classificacao` aqui é o veredicto da conciliação
-> (1 a 6, tabela de 2.7). Não confunda com `CodigoStatus` do pagamento (1 a 8,
+> (1 a 7, tabela de 2.7). Não confunda com `CodigoStatus` do pagamento (1 a 8,
 > capítulo 9): são numerações independentes, em tabelas diferentes, e a única
-> coisa que têm em comum é começarem em 1.
+> coisa que têm em comum é começarem em 1. A seção seguinte é o único lugar do
+> guia em que uma vira a outra.
 
 Nunca faça `UPDATE` nessa tabela. O motivo está no capítulo 14.
 
@@ -1802,10 +1913,103 @@ Nunca faça `UPDATE` nessa tabela. O motivo está no capítulo 14.
 > de R$ 938,50. Efetivado R$ 937,50: diferença de R$ 1,00 de tarifa. Como a
 > ocorrência `06` está marcada como de valor variável no De/Para (capítulo 7), a
 > política devolve `DentroDaTolerancia` e a linha é gravada como **Conciliado**,
-> com `DiferencaCent = -100` — a diferença é aceita, mas não some. O status do
-> pagamento vai para `Finalizado (6)` e a `VersaoEstado` sobe para 3.
+> com `DiferencaCent = -100` — a diferença é aceita, mas não some. O que leva o
+> pagamento a `Finalizado (6)` e a `VersaoEstado` a 3 é o passo da seção
+> seguinte, não esta linha.
 
-### 6.11 Checkpoint
+### 6.11 Do veredicto ao status: onde as duas numerações se encontram
+
+O capítulo 2 avisou que `Classificacao` e `CodigoStatus` são numerações
+independentes. Esta seção é o único ponto do pipeline em que elas se tocam — e é
+o elo que o diagrama de 4.1 desenha como a **seta sólida**: o que dispara a
+geração do retorno é a mudança de status, não a linha em `ItemConciliado`.
+
+```mermaid
+flowchart LR
+    IC["Classificacao<br/>(veredicto do motor)"] --> F{"A linha traz<br/>ocorrência do banco?"}
+    F -->|"1 Conciliado<br/>2 Divergência"| DP["De/Para de entrada<br/>(capítulo 7)"]
+    F -->|"3, 4, 5, 7"| N["Status NÃO muda<br/>vira pendência"]
+    DP --> R{"EhReversao?"}
+    R -->|não| ST["CodigoStatus novo<br/>VersaoEstado + 1"]
+    R -->|sim| CP["Linha compensatória<br/>volta a Processando (cap. 14)"]
+    ST --> G["Elegível para o<br/>próximo retorno (cap. 9 e 11)"]
+    CP --> G
+```
+
+**Quem traduz é o De/Para, não a classificação.** A classificação diz se houve
+par e se o valor bate; ela não sabe a diferença entre uma liquidação e uma
+rejeição — as duas casam perfeitamente e as duas são `Conciliado`. Quem sabe é o
+código de ocorrência, traduzido pela tabela do capítulo 7.
+
+| Classificação | Mexe no status? | Por quê |
+|---|---|---|
+| 1 Conciliado | **sim** | Achou par e tem ocorrência traduzida |
+| 2 Divergência de valor | **sim** | O desfecho é o mesmo; o que diverge é o valor, e isso é pendência à parte |
+| 3 Só interno | não | Não chegou ocorrência nenhuma. Quem julga é a régua de prazo (capítulo 8) |
+| 4 Só externo | não | Não há pagamento para atualizar |
+| 5 Duplicado | não | A primeira linha já atualizou |
+| 7 Ocorrência desconhecida | não | Não sabemos o que aconteceu (7.4) |
+
+O `UPDATE` entra **na mesma transação** dos passos 0 a 7 de 6.8. `@CodigoBanco` e
+`@VersaoLayout` são as variáveis resolvidas no início daquele procedimento, a
+partir de `ArquivoProcessado` (5.3):
+
+```sql
+-- Passo 8: aplica o desfecho ao pagamento.
+-- As ocorrências de reversão ficam de fora: elas têm caminho próprio (cap. 14).
+UPDATE p
+SET    p.CodigoStatus    = m.CodigoStatus,
+       p.VersaoEstado    = p.VersaoEstado + 1,
+       p.DataAtualizacao = SYSUTCDATETIME()
+FROM   Pagamento.Boleto        p
+JOIN   Conciliacao.ItemConciliado ic ON ic.PagamentoID = p.BoletoID
+JOIN   Conciliacao.StagingRetorno  s ON s.StagingID    = ic.StagingID
+JOIN   Conciliacao.MapaOcorrencia  m
+       ON  m.Direcao          = 'E'
+       AND m.CodigoBanco      = @CodigoBanco
+       AND m.VersaoLayout     = @VersaoLayout
+       AND m.CodigoOcorrencia = s.CodigoOcorrencia
+       AND m.VigenciaFim IS NULL
+WHERE  ic.ArquivoID      = @ArquivoID
+  AND  ic.Classificacao IN (1, 2)
+  AND  m.EhReversao      = 0
+  AND  p.CodigoStatus   <> m.CodigoStatus;   -- ver a nota abaixo
+```
+
+Três detalhes que parecem menores e não são:
+
+- **`DataAtualizacao = SYSUTCDATETIME()` não é enfeite.** É ela que põe o
+  pagamento na janela do parcial (9.2). Um `UPDATE` de status que esqueça essa
+  coluna produz um pagamento que mudou de estado e **nunca é reportado**.
+- **`VersaoEstado + 1` também não.** É o que faz a segunda passagem pelo mesmo
+  status voltar a ser reportável depois de uma reversão (10.6).
+- **O filtro `p.CodigoStatus <> m.CodigoStatus`** evita queimar uma versão quando
+  o arquivo repete um desfecho que já estava aplicado — reprocessamento
+  (6.9), arquivo reenviado, retentativa. Sem ele, cada reprocesso incrementaria a
+  versão e o cliente receberia a mesma ocorrência de novo.
+
+E, fechando o que 6.1 prometeu, o enfileiramento do encerramento de remessa —
+disparado aqui porque é aqui que uma remessa **acaba** de ficar sem item em
+trânsito:
+
+```sql
+-- Só as remessas tocadas por este arquivo, e só as que fecharam agora.
+INSERT INTO Fila.Mensagem (Tipo, ChaveParticao, Payload)
+SELECT DISTINCT 'EncerramentoRemessaSolicitado', @ClienteDocumento,
+       CONCAT('{"arquivoRemessaId":"', CONVERT(VARCHAR(36), b.ArquivoID), '"}')
+FROM   Conciliacao.ItemConciliado ic
+JOIN   Pagamento.Boleto b ON b.BoletoID = ic.PagamentoID
+WHERE  ic.ArquivoID = @ArquivoID
+  AND  NOT EXISTS (SELECT 1 FROM Pagamento.Boleto x
+                   WHERE  x.ArquivoID = b.ArquivoID
+                     AND  x.CodigoStatus IN (1, 2, 7, 8));   -- em trânsito: ver 9.1
+```
+
+O consumidor dessa mensagem ainda confere, com a consulta de 9.3, se o
+encerramento já foi emitido: a fila é at-least-once, e a conferência é o que
+torna a duplicata inofensiva.
+
+### 6.12 Checkpoint
 
 1. O arquivo traz duas vezes a mesma ocorrência para o mesmo título. O que o
    motor produz?
@@ -1822,8 +2026,31 @@ Nunca faça `UPDATE` nessa tabela. O motivo está no capítulo 14.
    ficou 30x mais lento com o mesmo volume. Por quê?
    *Predicado de junção com `OR` derruba o seek: o otimizador varre a tabela em
    vez de usar `IX_I_Forte` e `IX_I_Composta`.*
+5. Por que um pagamento já `Finalizado` continua na lista de candidatos, se ele
+   nunca vai virar "só interno"?
+   *Porque a reversão do capítulo 14 traz uma ocorrência para ele. Casar é uma
+   coisa; virar pendência é outra — o status recorta só a segunda.*
+6. O casamento gravou o veredicto, mas o status do pagamento continuou em
+   `Processando`. O cliente recebe alguma coisa?
+   *Não. O que dispara a geração é a mudança de status (4.1), não a linha em
+   `ItemConciliado`. É a aplicação da seção 6.11 que fecha esse circuito.*
 
 ---
+
+> **Onde estamos.** As etapas 1 e 2 já rodaram: o arquivo entrou (capítulo 5), o
+> motor classificou (capítulo 6) e o status do pagamento foi atualizado (6.11).
+> Os **quatro capítulos seguintes não são etapas** — são as regras que a etapa 3
+> vai consumir, e cada um responde a uma pergunta que a geração não sabe
+> responder sozinha:
+>
+> | Capítulo | A pergunta que ele responde |
+> |---|---|
+> | **7** De/Para | O código `06` deste banco quer dizer o quê? |
+> | **8** Prazos | "Só interno" é atraso ou limbo legítimo? |
+> | **9** Estados | Quais status o cliente pode ver, e em que tipo de arquivo? |
+> | **10** Reportado | Este estado já foi informado a ele? |
+>
+> A etapa 3 volta no capítulo 11.
 
 ## 7. De/Para de códigos de ocorrência
 
@@ -1942,7 +2169,7 @@ manhã.
 |---|---|---|
 | **Rejeitar o arquivo inteiro** | Nada é processado; o banco é acionado | Quase nunca: 400 linhas boas ficam paradas por uma ruim |
 | **Ignorar a linha** | O item vira "só interno" mais tarde | **Nunca.** Perde ocorrência em silêncio, e o sintoma aparece como queda de taxa de casamento sem causa |
-| **Parquear a linha para análise** | A linha é gravada, marcada, e não altera status nenhum | **É a recomendada** |
+| **Parquear a linha para análise** | A linha é gravada com classificação própria e não altera status nenhum | **É a recomendada** |
 
 A recomendada, em código:
 
@@ -1957,15 +2184,18 @@ var traducao = _dePara.Traduzir(banco, layout, externo.CodigoOcorrencia);
 
 if (traducao is null)
 {
-    // 1. A linha É gravada, com classificação própria. Nada some.
-    // 2. O status do pagamento NÃO muda: não sabemos o que aconteceu.
+    // 1. A linha É gravada, com classificação PRÓPRIA (7). Nada some.
+    //    Não use "só externo" aqui: ela pode até ter achado o pagamento, e a
+    //    operação precisa distinguir "não sei de quem é" de "não sei o que é".
+    // 2. O status do pagamento NÃO muda: não sabemos o que aconteceu (6.11).
     // 3. Alerta imediato, com o código e o arquivo. É trabalho para hoje.
     _log.LogError("Ocorrência desconhecida {Ocorrencia} do banco {Banco} layout {Layout}, "
                 + "arquivo {ArquivoId} linha {Linha}. Item parqueado.",
                   externo.CodigoOcorrencia, banco, layout, arquivoId, externo.NumeroLinha);
 
-    return new ItemConciliado(ClassificacaoConciliacao.SoExterno, chave, interno, externo,
-        Dinheiro.Zero, $"Ocorrência desconhecida: {externo.CodigoOcorrencia}");
+    return new ItemConciliado(ClassificacaoConciliacao.OcorrenciaDesconhecida, chave,
+        interno, externo, Dinheiro.Zero,
+        $"Ocorrência desconhecida: {externo.CodigoOcorrencia}");
 }
 ```
 
@@ -1973,7 +2203,9 @@ Três propriedades desse desenho:
 
 - **O arquivo inteiro processa.** As 411 linhas conhecidas seguem o fluxo normal.
 - **A linha desconhecida não some** e não vira dado silenciosamente errado: ela
-  fica na fila de pendências com um motivo legível.
+  fica na fila de pendências com um motivo legível — e com uma classificação que
+  a separa das demais pendências, porque a ação é outra: aqui o conserto é
+  cadastrar a tradução, não investigar o dinheiro.
 - **Corrigir é inserir uma linha no `MapaOcorrencia` e reprocessar o arquivo.**
   Como o casamento é idempotente (6.9), reprocessar é seguro — e é por isso que a
   idempotência daquela seção não é preciosismo.
@@ -2000,16 +2232,21 @@ Ela é **dado**, não código — mas dado com o mesmo rigor de código:
 Uma consulta de operação que vale deixar pronta:
 
 ```sql
--- Ocorrências que apareceram em arquivo e não existem no mapa vigente.
+-- Ocorrências que apareceram em arquivo e não existem no mapa vigente
+-- DAQUELE banco e layout — o par vem de ArquivoProcessado (5.3).
 -- Se isto volta com linhas, alguém tem trabalho hoje.
-SELECT s.CodigoOcorrencia, COUNT(*) AS Linhas, MIN(s.DataOcorrencia) AS DesdeQuando
-FROM   Conciliacao.StagingRetorno s
+SELECT a.CodigoBanco, a.VersaoLayout, s.CodigoOcorrencia,
+       COUNT(*) AS Linhas, MIN(s.DataOcorrencia) AS DesdeQuando
+FROM   Conciliacao.StagingRetorno   s
+JOIN   Conciliacao.ArquivoProcessado a ON a.ArquivoID = s.ArquivoID
 WHERE  s.DataOcorrencia >= DATEADD(day, -30, CAST(SYSUTCDATETIME() AS date))
   AND  NOT EXISTS (SELECT 1 FROM Conciliacao.MapaOcorrencia m
-                   WHERE  m.Direcao          = 'E'
+                   WHERE  m.CodigoBanco      = a.CodigoBanco
+                     AND  m.VersaoLayout     = a.VersaoLayout
+                     AND  m.Direcao          = 'E'
                      AND  m.CodigoOcorrencia = s.CodigoOcorrencia
                      AND  m.VigenciaFim IS NULL)
-GROUP BY s.CodigoOcorrencia
+GROUP BY a.CodigoBanco, a.VersaoLayout, s.CodigoOcorrencia
 ORDER BY Linhas DESC;
 ```
 
@@ -2022,8 +2259,8 @@ ORDER BY Linhas DESC;
 
 1. O banco passa a usar o código `48` sem avisar. O que o pipeline faz na
    madrugada?
-   *Processa o resto do arquivo, grava a linha do `48` como pendência com motivo
-   "ocorrência desconhecida", não mexe no status do pagamento e alerta.*
+   *Processa o resto do arquivo, grava a linha do `48` com classificação 7
+   (ocorrência desconhecida), não mexe no status do pagamento e alerta.*
 2. Por que `ValorVariavel` mora no De/Para e não no `appsettings`?
    *Porque é uma propriedade da ocorrência daquele banco. No arquivo de
    configuração ela envelhece separada da tabela que descreve a mesma coisa.*
@@ -2104,16 +2341,23 @@ BEGIN
     DECLARE @passo INT = CASE WHEN @dias < 0 THEN -1 ELSE 1 END;
     DECLARE @faltam INT = ABS(@dias);
     DECLARE @atual DATE = @data;
+    -- Trava de segurança: sem ela, um calendário que acabou faz esta função
+    -- girar até o fim do tipo DATE. Ver o alerta de horizonte acima.
+    DECLARE @passosRestantes INT = ABS(@dias) * 10 + 60;
 
-    WHILE @faltam > 0
+    WHILE @faltam > 0 AND @passosRestantes > 0
     BEGIN
         SET @atual = DATEADD(day, @passo, @atual);
+        SET @passosRestantes = @passosRestantes - 1;
         IF EXISTS (SELECT 1 FROM Calendario.DiaUtil
                    WHERE Praca = @praca AND Data = @atual AND EhDiaUtil = 1)
             SET @faltam = @faltam - 1;
     END
 
-    RETURN @atual;
+    -- Calendário curto demais: devolve NULL em vez de uma data inventada.
+    -- NULL propaga para o WHERE, a consulta não retorna nada, e o alerta de
+    -- horizonte é quem explica o porquê. Mentir uma data seria pior.
+    RETURN CASE WHEN @faltam = 0 THEN @atual END;
 END
 GO
 
@@ -2128,6 +2372,12 @@ BEGIN
 END
 GO
 ```
+
+> **`@dias = 0` devolve a própria data, útil ou não.** É o que se quer para o
+> PIX, que liquida em qualquer dia. Para o TED, que só ocorre em dia útil, o
+> prazo "mesmo dia" só vale se o envio foi em dia útil antes do corte — por isso
+> a régua de 8.3 recebe a **data de envio**, e não a de hoje: quem grava o envio
+> já resolveu o corte.
 
 > **Cuidado de desempenho.** Estas são funções escalares: chamá-las **por linha**
 > numa consulta grande é um dos jeitos mais eficientes de derrubar um SQL Server.
@@ -2202,9 +2452,11 @@ feriado, então o prazo é zero dia útil — mas o **arquivo** de retorno conti
 saindo em ciclo comercial. Um PIX liquidado no sábado fica "só interno, dentro do
 prazo" até o ciclo de segunda; não é atraso, é a janela de publicação.
 
-### 8.4 As consultas corrigidas
+### 8.4 A consulta de remessa presa
 
-A remessa presa (9.3) e o horizonte de alerta passam a contar dias úteis:
+Esta é **a única declaração desta consulta no guia**; a seção 9.3, que a usa,
+aponta para cá. Ela responde: *que remessas passaram do prazo, em dias úteis, e
+ainda têm item em trânsito?*
 
 ```sql
 -- Remessas presas: passou do prazo em DIAS ÚTEIS e ainda tem item em trânsito.
@@ -2213,18 +2465,30 @@ DECLARE @limite DATE = Calendario.AdicionarDiasUteis(
                            CAST(SYSUTCDATETIME() AS date), -@prazoLimiteDiasUteis, 'BR');
 
 SELECT a.ArquivoID,
+       a.ClienteDocumento,
        Calendario.DiasUteisEntre(CAST(a.DataCriacao AS date),
                                  CAST(SYSUTCDATETIME() AS date), 'BR') AS DiasUteisAberta,
        COUNT(b.BoletoID)                                               AS ItensPendentes
 FROM   Pagamento.Arquivo a
 JOIN   Pagamento.Boleto b ON b.ArquivoID = a.ArquivoID
-WHERE  b.CodigoStatus IN (2, 7, 8)
+WHERE  b.CodigoStatus IN (1, 2, 7, 8)          -- em trânsito: ver 9.1
   AND  CAST(a.DataCriacao AS date) < @limite      -- comparação com a variável: uma chamada só
-GROUP BY a.ArquivoID, a.DataCriacao;
+GROUP BY a.ArquivoID, a.ClienteDocumento, a.DataCriacao;
 ```
 
-A função escalar aparece no `SELECT` apenas para exibir a idade — e só nas
-poucas linhas que o `WHERE` já selecionou. O filtro em si usa a variável.
+Repare no padrão, porque ele vale para toda consulta de prazo deste guia: **a
+data-limite é calculada uma vez, numa variável, e o `WHERE` compara com ela.** A
+função escalar aparece no `SELECT` apenas para exibir a idade — e só nas poucas
+linhas que o `WHERE` já selecionou. Invertido, com a função dentro do `WHERE`,
+seriam milhões de chamadas e um servidor no chão.
+
+> **O fio condutor.** Recuando algumas horas na história: o boleto de R$ 938,50
+> entrou na remessa de **sexta, 28/08**. Na **segunda, 31/08**, o arquivo do banco
+> ainda não tinha chegado, e no ciclo das 9h o motor classificou o item como **só
+> interno**. A régua não gera alerta: sendo boleto, o prazo é D+1, que em dias
+> úteis vence justamente nessa segunda — `VencendoHoje`, painel e nada mais.
+> Contado em dias corridos, o alerta teria disparado no sábado, com o prazo
+> intacto. O arquivo chega às 13h, e é dele que tratam os capítulos 5 a 7.
 
 ### 8.5 Checkpoint
 
@@ -2234,8 +2498,9 @@ poucas linhas que o `WHERE` já selecionou. O filtro em si usa a variável.
    *Porque ela depende de relógio e de calendário. Dentro do motor, ele deixaria
    de ser função pura e determinística.*
 3. O calendário foi carregado só até dezembro. O que quebra em janeiro?
-   *`AdicionarDiasUteis` entra em laço até achar um dia útil que não existe —
-   por isso o alerta de horizonte de 8.2 é obrigatório, não opcional.*
+   *`AdicionarDiasUteis` esgota a trava e devolve `NULL`: as consultas de prazo
+   param de retornar linhas, em silêncio. É por isso que o alerta de horizonte de
+   8.2 é obrigatório, não opcional — ele é o único que avisa antes.*
 4. Expurgo de doze meses: dias úteis ou corridos?
    *Corridos. Prazo de armazenamento é calendário; só prazo de negócio usa dias
    úteis.*
@@ -2292,6 +2557,12 @@ stateDiagram-v2
     end note
 ```
 
+**O conjunto "em trânsito" é `{1, 2, 7, 8}`** — Incluído, Processando e os dois
+de Pix URL. É o complemento exato dos terminais `{3, 4, 5, 6}`, e ele aparece em
+três lugares do guia com esse mesmo significado: no filtro de "só interno" (6.5 e
+6.8), no encerramento de remessa (6.11 e 9.3) e no alerta de remessa presa (8.4).
+Onde você o vir, é sempre a mesma pergunta: *este item ainda espera desfecho?*
+
 Três leituras que o desenho acima exige:
 
 - **Cancelamento só antes do envio.** Depois que a ordem foi ao banco, cancelar
@@ -2333,6 +2604,11 @@ Três filtros combinados:
 2. **Não reportado** — a tripla `(PagamentoID, CodigoStatus, VersaoEstado)` ainda
    não foi enviada
 3. **Reportável** — `CodigoStatus IN (1, 3, 4, 5, 6)`
+
+> O `5` (Erro) só entra nessa lista quando for **terminal de verdade**, pela
+> ressalva de 9.1. Se o seu fluxo grava `Erro` com retentativa pendente, ou você
+> tira o 5 daqui, ou marca a retentativa no pagamento e acrescenta o filtro. O
+> pior dos mundos é reportar rejeição de algo que liquida meia hora depois.
 
 ```sql
 DECLARE @documento  VARCHAR(20) = '02384871000181';
@@ -2460,7 +2736,7 @@ WHERE  a.ClienteDocumento = @documento
   AND  NOT EXISTS (   -- nenhum item em trânsito
            SELECT 1 FROM Pagamento.Boleto b
            WHERE  b.ArquivoID = a.ArquivoID
-             AND  b.CodigoStatus IN (2, 7, 8)
+             AND  b.CodigoStatus IN (1, 2, 7, 8)   -- em trânsito: ver 9.1
        )
   AND  NOT EXISTS (   -- ainda não emitido
            SELECT 1 FROM Pagamento.RetornoGerado r
@@ -2469,26 +2745,12 @@ WHERE  a.ClienteDocumento = @documento
        );
 ```
 
-E o prazo-limite, que impede a remessa de ficar aberta para sempre — contado em
-**dias úteis**, pela régua do capítulo 8:
-
-```sql
-DECLARE @prazoLimiteDiasUteis INT = 2;
-DECLARE @limite DATE = Calendario.AdicionarDiasUteis(
-                           CAST(SYSUTCDATETIME() AS date), -@prazoLimiteDiasUteis, 'BR');
-
--- Remessas presas: passou do prazo e ainda tem item em trânsito.
--- Emita o encerramento com o que houver E gere alerta com os pendentes.
-SELECT a.ArquivoID,
-       Calendario.DiasUteisEntre(CAST(a.DataCriacao AS date),
-                                 CAST(SYSUTCDATETIME() AS date), 'BR') AS DiasUteisAberta,
-       COUNT(b.BoletoID)                                               AS ItensPendentes
-FROM   Pagamento.Arquivo a
-JOIN   Pagamento.Boleto b ON b.ArquivoID = a.ArquivoID
-WHERE  b.CodigoStatus IN (2, 7, 8)
-  AND  CAST(a.DataCriacao AS date) < @limite
-GROUP BY a.ArquivoID, a.DataCriacao;
-```
+E o prazo-limite, que impede a remessa de ficar aberta para sempre. A consulta
+que o detecta está em **8.4**, contada em dias úteis, e não se repete aqui — o
+que este capítulo acrescenta é o que fazer com o resultado dela: **emita o
+encerramento com o que houver e gere alerta com a lista dos pendentes.** Uma
+remessa encerrada por prazo não é a mesma coisa que uma remessa encerrada por
+conclusão, e o alerta é o que registra a diferença.
 
 **Item que nunca termina é o caso que ninguém prevê.** Sem esse alerta, uma
 remessa pode ficar cinco dias com três itens presos e ninguém descobre até o
@@ -2509,14 +2771,23 @@ public sealed class AgendadorRetornoWorker(
     private static readonly TimeZoneInfo Fuso =
         TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo");
 
+    // O último ciclo disparado. Sem esta memória, um laço que acorda a cada
+    // 30 segundos dispara DUAS vezes dentro do minuto cheio — dois arquivos,
+    // dois NSA, e o segundo vazio ou parcial. É o bug clássico do agendador
+    // caseiro, e ele não aparece em teste porque o teste não espera um minuto.
+    private DateTimeOffset? _ultimoCiclo;
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
             var agora = TimeZoneInfo.ConvertTime(relogio.GetUtcNow(), Fuso);
+            var cicloAtual = new DateTimeOffset(agora.Year, agora.Month, agora.Day,
+                                                agora.Hour, 0, 0, agora.Offset);
 
-            if (agora.Hour is >= 8 and <= 18 && agora.Minute == 0)
+            if (agora.Hour is >= 8 and <= 18 && cicloAtual != _ultimoCiclo)
             {
+                _ultimoCiclo = cicloAtual;
                 var tipo = agora.Hour == 18 ? TipoRetorno.FechamentoDiario : TipoRetorno.Parcial;
 
                 foreach (var documento in await clientes.AtivosAsync(ct))
@@ -2528,6 +2799,12 @@ public sealed class AgendadorRetornoWorker(
     }
 }
 ```
+
+> **Com mais de uma réplica do agendador, isso não basta.** `_ultimoCiclo` é
+> memória de processo: duas réplicas disparam o mesmo ciclo duas vezes. A defesa
+> que vale é a de sempre — `sp_getapplock` por `(documento, ciclo)` na geração
+> (16.4), ou uma única réplica do agendador declarada no orquestrador. O
+> agendador é a peça do sistema que **menos** ganha em escalar horizontalmente.
 
 O encerramento de remessa não entra nesse laço: ele é disparado pelo
 `CasamentoWorker`, quando a atualização de status deixa a remessa sem itens em
@@ -2613,7 +2890,7 @@ do mercado é o nome do arquivo.
 ```
 {documento}_{yyyyMMdd}_{nsa:000000}.RET
 
-02384871000181_20260830_000042.RET
+02384871000181_20260831_000042.RET
 ```
 
 Ele carrega o cliente, a data e o NSA — é o que o cliente vê, o que aparece no
@@ -2662,6 +2939,13 @@ CREATE TABLE Pagamento.RetornoGerado
 
     CONSTRAINT PK_RetornoGerado PRIMARY KEY CLUSTERED (Documento, Nsa)
 );
+
+-- Sustenta a consulta de encerramento de remessa (9.3), que pergunta
+-- "esta remessa já teve encerramento emitido?". Filtrado porque a coluna
+-- só é preenchida nesse tipo de retorno.
+CREATE INDEX IX_RetornoGerado_Remessa
+    ON Pagamento.RetornoGerado (ArquivoRemessaID)
+    WHERE ArquivoRemessaID IS NOT NULL;
 ```
 
 A PK em `(Documento, Nsa)` é intencional: além de indexar a busca natural, ela
@@ -2735,8 +3019,8 @@ convivência.
 A opção menos invasiva, e a que evolui melhor. Um arquivo irmão, mesmo nome-base:
 
 ```
-02384871000181_20260830_000042.RET
-02384871000181_20260830_000042.RET.json
+02384871000181_20260831_000042.RET
+02384871000181_20260831_000042.RET.json
 ```
 
 ```json
@@ -2744,9 +3028,9 @@ A opção menos invasiva, e a que evolui melhor. Um arquivo irmão, mesmo nome-b
   "nsa": 42,
   "tipo": "Parcial",
   "clienteDocumento": "02384871000181",
-  "geradoEm": "2026-08-30T14:22:31Z",
+  "geradoEm": "2026-08-31T14:22:31Z",
   "quantidadeItens": 137,
-  "periodo": { "inicio": "2026-08-30T08:00:00Z", "fim": "2026-08-30T14:22:00Z" },
+  "periodo": { "inicio": "2026-08-31T08:00:00Z", "fim": "2026-08-31T14:22:00Z" },
   "arquivoRemessa": null,
   "hashConteudo": "9f2c4a…"
 }
@@ -2771,6 +3055,13 @@ apenas os parciais — o marcador é conveniência operacional, e a ordem recome
 Em qualquer dos dois casos, deixe explícito no manual de integração qual é o
 comportamento esperado. Ambiguidade aqui vira dupla contabilização no cliente, e
 esse tipo de erro aparece semanas depois, na conciliação **dele**.
+
+> **O fio condutor.** Às 13h58 o casamento levou o boleto de R$ 938,50 a
+> `Finalizado (6)`, `VersaoEstado = 3`. Ele não vira arquivo nesse instante: o
+> agendador dispara às 14h00, o parcial o encontra na janela, e é esse ciclo que
+> gera o NSA 42. Se o mesmo boleto tivesse passado por `Processando` e
+> `Finalizado` entre 13h e 14h, o arquivo levaria **só o 6** — o CNAB é foto, não
+> trilha.
 
 ### 9.6 Checkpoint
 
@@ -2956,11 +3247,11 @@ gantt
     axisFormat %H:%M
 
     section Janela das 14h
-    Le de 12h55 a 14h00        :done, j1, 12:55, 65m
+    Lê de 12h55 a 14h00         :done, j1, 12:55, 65m
     section Janela das 15h
-    Le de 13h55 a 15h00        :active, j2, 13:55, 65m
+    Lê de 13h55 a 15h00         :active, j2, 13:55, 65m
     section Transação atrasada
-    Escreve 13h58 commita 14h00 :crit, t1, 13:58, 3m
+    Escreve 13h58, commita 14h00 :crit, t1, 13:58, 3m
 ```
 
 Sem sobreposição, a transação que **escreveu** `DataAtualizacao = 13:58` mas só
@@ -3038,7 +3329,8 @@ O cliente nunca fica sabendo da segunda liquidação. Daí a coluna
 ALTER TABLE Pagamento.Boleto ADD VersaoEstado INT NOT NULL
     CONSTRAINT DF_Boleto_Versao DEFAULT 1;
 
--- em toda mudança de status:
+-- A forma de TODA mudança de status. O caminho que o pipeline usa de fato
+-- é o passo 8 do casamento (6.11), que aplica isto a um lote de pagamentos.
 UPDATE Pagamento.Boleto
 SET    CodigoStatus    = @novoStatus,
        VersaoEstado    = VersaoEstado + 1,
@@ -3150,8 +3442,44 @@ faz exatamente isso: seleciona, depois reserva. O motivo está em 11.2.
 
 ### 11.2 O código
 
+A consulta da janela (9.2) devolve uma lista deste tipo:
+
 ```csharp
-public async Task GerarAsync(string documento, TipoRetorno tipo, CancellationToken ct)
+/// Um item elegível para o retorno. Sai da consulta de 9.2.
+public sealed record ItemParaRetorno(
+    Guid     PagamentoId,
+    Guid     ArquivoRemessaId,   // a remessa de origem; nasce em 5.1
+    int?     NumeroLote,         // nulo = órfão (9.4)
+    short    CodigoStatus,
+    int      VersaoEstado,
+    Dinheiro Valor,
+    DateTime DataAtualizacao);   // alimenta a marca d'água
+```
+
+E o contrato com o conversor, que é tudo o que esta etapa precisa saber dele:
+
+```csharp
+public sealed record LoteParaConversor(
+    int                        NumeroLoteSaida,   // renumerado de 1 a N; ver 11.3
+    string                     HeaderOriginal,
+    string?                    TrailerOriginal,
+    IReadOnlyList<ItemParaRetorno> Itens,
+    int                        QuantidadeRegistros,
+    Dinheiro                   SomatorioValores);
+
+public sealed record PedidoConversao(
+    string                        HeaderArquivo,
+    string?                       TrailerArquivo,
+    long                          Nsa,
+    IReadOnlyList<LoteParaConversor> Lotes);
+```
+
+```csharp
+public async Task GerarAsync(
+    string documento,
+    TipoRetorno tipo,
+    Guid? arquivoRemessaId,       // preenchido só no encerramento de remessa
+    CancellationToken ct)
 {
     await using var conexao = new SqlConnection(_connectionString);
     await conexao.OpenAsync(ct);
@@ -3161,7 +3489,12 @@ public async Task GerarAsync(string documento, TipoRetorno tipo, CancellationTok
     {
         // 1. Seleciona ANTES de reservar o NSA. Ver a nota abaixo:
         //    o motivo é o tempo de lock, não o número em si.
-        var itens = await _repo.ObterElegiveisAsync(documento, tipo, conexao, tx, ct);
+        //    A janela é a marca d'água atual até agora (9.2); no fechamento
+        //    diário e no encerramento ela não filtra, mas ainda é registrada.
+        var janela = await _janela.AbrirAsync(documento, tipo, conexao, tx, ct);
+        var itens  = await _repo.ObterElegiveisAsync(
+                         documento, tipo, arquivoRemessaId, janela, conexao, tx, ct);
+
         if (itens.Count == 0)
         {
             await tx.RollbackAsync(ct);
@@ -3172,13 +3505,23 @@ public async Task GerarAsync(string documento, TipoRetorno tipo, CancellationTok
         // 2. Reserva atômica do NSA (ver capítulo 16)
         var nsa = await _nsa.ReservarProximoAsync(documento, conexao, tx, ct);
 
-        // 3. Monta a estrutura para o conversor
+        // 3. Órfãos primeiro: sem lote, não há onde encaixá-los (9.4).
+        var orfaos = itens.Where(i => !i.NumeroLote.HasValue).ToList();
+        if (orfaos.Count > 0)
+            _log.LogWarning("{Qtd} itens sem NumeroLote excluídos do retorno de {Doc}.",
+                orfaos.Count, documento);
+
+        // 4. Agrupa por (remessa, lote): um parcial pode cobrir VÁRIAS remessas,
+        //    e duas remessas diferentes podem ter, cada uma, um lote de número 1.
+        //    NumeroLoteSaida renumera de 1 a N dentro deste arquivo — ver 11.3.
         var lotes = itens
-            .Where(i => i.NumeroLote.HasValue)      // órfãos tratados à parte
-            .GroupBy(i => (i.ArquivoRemessaId, i.NumeroLote!.Value))
-            .Select(g => new LoteParaConversor(
-                HeaderOriginal:  _linhas.HeaderLote(g.Key.ArquivoRemessaId, g.Key.Value),
-                TrailerOriginal: _linhas.TrailerLote(g.Key.ArquivoRemessaId, g.Key.Value),
+            .Where(i => i.NumeroLote.HasValue)
+            .GroupBy(i => (i.ArquivoRemessaId, NumeroLote: i.NumeroLote!.Value))
+            .OrderBy(g => g.Key.ArquivoRemessaId).ThenBy(g => g.Key.NumeroLote)
+            .Select((g, indice) => new LoteParaConversor(
+                NumeroLoteSaida: indice + 1,
+                HeaderOriginal:  _linhas.HeaderLote(g.Key.ArquivoRemessaId, g.Key.NumeroLote),
+                TrailerOriginal: _linhas.TrailerLote(g.Key.ArquivoRemessaId, g.Key.NumeroLote),
                 Itens:           g.ToList(),
                 // Totalizadores recalculados: refletem o que FOI incluído,
                 // não o lote original da remessa.
@@ -3186,39 +3529,43 @@ public async Task GerarAsync(string documento, TipoRetorno tipo, CancellationTok
                 SomatorioValores:    g.Aggregate(Dinheiro.Zero, (acc, i) => acc + i.Valor)))
             .ToList();
 
-        var orfaos = itens.Where(i => !i.NumeroLote.HasValue).ToList();
-        if (orfaos.Count > 0)
-            _log.LogWarning("{Qtd} itens sem NumeroLote excluídos do retorno de {Doc}.",
-                orfaos.Count, documento);
-
-        // 4. Chama o conversor
+        // 5. Chama o conversor. O header/trailer de ARQUIVO identificam o
+        //    cedente, não uma remessa específica: por isso vêm do cliente,
+        //    e não de itens[0]. Ver 11.3.
         var bytes = await _conversor.MontarRetornoAsync(new PedidoConversao(
-            HeaderArquivo:  _linhas.HeaderArquivo(itens[0].ArquivoRemessaId),
-            TrailerArquivo: _linhas.TrailerArquivo(itens[0].ArquivoRemessaId),
+            HeaderArquivo:  _linhas.HeaderArquivoBase(documento),
+            TrailerArquivo: _linhas.TrailerArquivoBase(documento),
             Nsa:            nsa,
             Lotes:          lotes), ct);
 
         var nome = $"{documento}_{_relogio.GetUtcNow():yyyyMMdd}_{nsa:D6}.RET";   // ver 9.5
         var hash = Convert.ToHexString(MD5.HashData(bytes)).ToLowerInvariant();
 
-        // 5. Conteúdo no armazenamento de trabalho, ANTES do commit.
+        // 6. Conteúdo no armazenamento de trabalho, ANTES do commit.
         //    Se a transação cair, isto vira lixo com TTL curto — e lixo é bem
         //    mais barato que arquivo publicado sem registro. Ver 13.1.
         var referencia = await _conteudo.GravarAsync(documento, nome, bytes, ct);
 
-        // 6. Metadados do arquivo emitido — mesma transação (9.5)
+        // 7. Metadados do arquivo emitido — mesma transação (9.5)
         await _retornos.RegistrarAsync(new RetornoGerado(
-            documento, nsa, tipo, arquivoRemessaId, itens.Count,
-            janela.Inicio, janela.Fim, nome, hash), conexao, tx, ct);
+            documento, nsa, tipo,
+            tipo == TipoRetorno.EncerramentoRemessa ? arquivoRemessaId : null,
+            itens.Count, janela.Inicio, janela.Fim, nome, hash), conexao, tx, ct);
 
-        // 7. Registra o que foi informado — mesma transação
+        // 8. Registra o que foi informado — mesma transação.
+        //    No fechamento e no encerramento a maioria das triplas já existe;
+        //    o NOT EXISTS do procedimento de 10.3 as descarta em silêncio.
         await _reportados.RegistrarAsync(itens, nsa, conexao, tx, ct);
 
-        // 8. Avança a marca d'água — mesma transação
-        await _janela.AvancarAsync(documento, itens.Max(i => i.DataAtualizacao), conexao, tx, ct);
+        // 9. Avança a marca d'água — SÓ no parcial. O fechamento diário e o
+        //    encerramento de remessa selecionam por outro critério e incluem
+        //    itens antigos de propósito: avançar a marca com o máximo deles
+        //    não faria sentido, e retroceder com o mínimo abriria um buraco.
+        if (tipo == TipoRetorno.Parcial)
+            await _janela.AvancarAsync(documento, itens.Max(i => i.DataAtualizacao), conexao, tx, ct);
 
-        // 9. Intenção de publicar — mesma transação. NÃO publica aqui.
-        //    Só a referência e os metadados; o conteúdo já está no passo 5.
+        // 10. Intenção de publicar — mesma transação. NÃO publica aqui.
+        //     Só a referência e os metadados; o conteúdo já está no passo 6.
         await _outbox.EnfileirarAsync("RetornoGerado", documento,
             new { Nsa = nsa, Nome = nome, Referencia = referencia, Hash = hash }, conexao, tx, ct);
 
@@ -3234,13 +3581,27 @@ public async Task GerarAsync(string documento, TipoRetorno tipo, CancellationTok
 }
 ```
 
-Repare no `Aggregate` do passo 3: ele depende do `operator +` de `Dinheiro`, que
+Repare no `Aggregate` do passo 4: ele depende do `operator +` de `Dinheiro`, que
 está definido em 2.7 junto com o `-`. Um tipo de dinheiro que só sabe subtrair
 compila até o dia em que alguém precisa somar um lote.
 
-Repare também nos passos 5 e 9: o conteúdo vai para o armazenamento de trabalho
+Repare também nos passos 6 e 10: o conteúdo vai para o armazenamento de trabalho
 e a outbox recebe apenas a **referência**, não o arquivo. O capítulo 13 explica
 por quê — e por que gravar o conteúdo antes do commit é a ordem segura.
+
+E repare no passo 9, que é o mais fácil de escrever errado: **a marca d'água é do
+parcial, e só dele.** Ela é o estado que diz "até aqui eu já contei"; um
+fechamento diário que a empurrasse para a frente faria o parcial seguinte pular
+tudo que mudou entre o fechamento e ele. Por segurança, a implementação de
+`AvancarAsync` também nunca deve andar para trás:
+
+```sql
+UPDATE Pagamento.ControleJanelaRetorno
+SET    UltimoInstanteReportado = @novo,
+       DataAtualizacao         = SYSUTCDATETIME()
+WHERE  ClienteDocumento = @documento
+  AND  (UltimoInstanteReportado IS NULL OR UltimoInstanteReportado < @novo);
+```
 
 #### Por que selecionar antes de reservar
 
@@ -3260,7 +3621,7 @@ elegíveis, que é a parte mais cara. Como a etapa é serial por cliente
 mesmo cliente — e é exatamente o problema que 11.4 levanta sobre o conversor
 remoto.
 
-### 11.3 Onde os header/trailer moram
+### 11.3 Onde os header/trailer moram — e como renumerar os lotes
 
 ```sql
 -- Um por arquivo de remessa
@@ -3295,6 +3656,58 @@ Guardar a linha original em vez de recompô-la a partir de campos tem uma
 vantagem grande: você devolve ao cliente **exatamente** o cabeçalho que ele
 mandou, sem risco de perder um campo que o seu modelo não mapeou.
 
+#### De qual remessa vem o header de arquivo
+
+Um parcial cobre **uma janela de tempo**, não uma remessa: ele pode levar itens
+de três remessas diferentes do mesmo cliente. Só o encerramento de remessa tem
+uma remessa única por definição. Daí a regra:
+
+| Nível | De onde vem no retorno |
+|---|---|
+| **Header/trailer de arquivo** | Do **cliente**, não da remessa: eles identificam o cedente (nome, CNPJ, agência, conta), que não varia entre remessas. Use o último header conhecido daquele documento como base |
+| **Header/trailer de lote** | Da **remessa de origem daquele lote**, um a um: é ali que moram o tipo de serviço e a forma de lançamento, que variam de lote para lote |
+
+O conversor sobrescreve, no header de arquivo, os campos que são do arquivo novo
+e não do antigo: o **NSA**, a data e a hora de geração e o código que distingue
+remessa de retorno. É por isso que `HeaderArquivoBase(documento)` é uma base, e
+não o arquivo final.
+
+#### A renumeração de lotes, que é obrigatória
+
+Dentro de um arquivo CNAB 240, **o número do lote é sequencial a partir de 1**.
+Se o parcial junta o lote 1 da remessa A com o lote 1 da remessa B, o arquivo sai
+com dois lotes de número 1 e o cliente o rejeita na leitura.
+
+Por isso o passo 4 de 11.2 calcula `NumeroLoteSaida`: uma renumeração de 1 a N na
+ordem em que os lotes entram no arquivo. Três lugares precisam do número novo:
+
+1. o **header de lote** (posições 4 a 7);
+2. o **trailer de lote** (mesmas posições);
+3. **cada registro de detalhe** daquele lote (mesmas posições).
+
+```csharp
+/// Reescreve o número do lote numa linha de 240 posições.
+/// As posições vêm do perfil de layout do banco (5.6), nunca espalhadas
+/// pelo código — aqui elas aparecem literais só para o exemplo ficar legível.
+public static string ComNumeroDeLote(string linha, int numeroLote)
+{
+    const int Inicio = 4, Tamanho = 4;          // base 1: posições 4 a 7
+
+    var destino = linha.ToCharArray();
+    numeroLote.ToString(CultureInfo.InvariantCulture)
+              .PadLeft(Tamanho, '0')
+              .AsSpan()
+              .CopyTo(destino.AsSpan(Inicio - 1, Tamanho));
+    return new string(destino);
+}
+```
+
+**A alternativa é não precisar disso:** gerar um retorno por remessa em vez de um
+por janela. Fica mais simples de montar e mais difícil de operar — o cliente
+passa a receber vários arquivos por ciclo, e o NSA avança muito mais rápido.
+Escolha uma das duas explicitamente; o que não funciona é juntar remessas e
+esquecer a renumeração.
+
 ### 11.4 Prós e contras
 
 | Decisão | A favor | Contra |
@@ -3303,6 +3716,8 @@ mandou, sem risco de perder um campo que o seu modelo não mapeou.
 | Recalcular totalizadores | Arquivo válido para o cliente | Precisa lembrar em todo parcial |
 | Guardar linha original | Fidelidade total | Ocupa 240 bytes por lote |
 | Conversor separado | Layout num lugar só | Uma chamada de rede no meio da transação |
+| Um retorno por janela (várias remessas) | Menos arquivos, NSA avança devagar | Exige renumerar lotes (11.3) |
+| Marca d'água só no parcial | Fechamento e encerramento não abrem buraco | Mais um `if` para lembrar |
 
 O último merece atenção: se o conversor for um serviço remoto, você está com uma
 transação aberta durante uma chamada de rede. Se ele demorar, o lock no
@@ -3315,7 +3730,7 @@ NSA) ou manter o conversor como biblioteca em processo.
 > com `CodigoStatus = 6` e `VersaoEstado = 3`. O NSA reservado é o **42**. O lote
 > original da remessa tinha 40 títulos; só 3 são elegíveis nesta janela, então o
 > trailer de lote sai com quantidade 3 e somatório dos 3 — não com os 40. O
-> arquivo se chama `02384871000181_20260830_000042.RET`.
+> arquivo se chama `02384871000181_20260831_000042.RET`.
 
 ### 11.5 Checkpoint
 
@@ -3333,6 +3748,13 @@ NSA) ou manter o conversor como biblioteca em processo.
 4. Por que a outbox recebe uma referência e não o conteúdo do arquivo?
    *Tamanho de linha, log de transação e dado sensível em texto claro no banco —
    capítulo 13.*
+5. O parcial das 14h juntou itens de duas remessas, cada uma com um lote de
+   número 1. O cliente rejeitou o arquivo. Por quê?
+   *Porque o número de lote é sequencial dentro do arquivo. Faltou a renumeração
+   de 11.3 no header, no trailer e nos detalhes.*
+6. O fechamento diário avançou a marca d'água para as 18h. O que se perde?
+   *Tudo que mudou entre o último parcial e as 18h e não entrou no fechamento
+   nunca mais aparece num parcial. A marca d'água é do parcial, e só dele.*
 
 ---
 
@@ -3394,8 +3816,15 @@ CREATE TABLE Conciliacao.Outbox
 
 -- Índice filtrado: só o que está pendente. Fica pequeno mesmo com a
 -- tabela grande, porque o filtro exclui tudo que já foi publicado.
+--
+-- A chave é OutboxID, e não DataCriacao, porque é por OutboxID que o
+-- consumo ordena: um índice na coluna errada obrigaria a ordenar o
+-- resultado, e a ordem é o que preserva a sequência de NSA do cliente.
+-- Payload fica de fora do INCLUDE de propósito: é NVARCHAR(MAX), e
+-- carregá-lo no índice desfaria a razão de o índice ser pequeno.
 CREATE INDEX IX_Outbox_Pendentes
-    ON Conciliacao.Outbox (DataCriacao)
+    ON Conciliacao.Outbox (OutboxID)
+    INCLUDE (ChaveParticao)
     WHERE DataPublicacao IS NULL;
 ```
 
@@ -3421,7 +3850,7 @@ reenvio. Com nome determinístico, reenviar sobrescreve o mesmo objeto em vez de
 criar um segundo arquivo:
 
 ```
-s3://retornos/02384871000181/02384871000181_20260830_000042.RET
+s3://retornos/02384871000181/02384871000181_20260831_000042.RET
                 └ prefixo por cliente  └ o mesmo nome de 9.5
 ```
 
@@ -3442,6 +3871,14 @@ WHERE DataPublicacao IS NULL
 ```
 
 ou serializar com `sp_getapplock` por documento (seção 16.4).
+
+> **O fio condutor.** O arquivo `02384871000181_20260831_000042.RET` foi gravado
+> no armazenamento de trabalho **antes** do commit; a outbox recebeu só a
+> referência, o NSA 42 e o hash. O publicador o copia para
+> `s3://retornos/02384871000181/02384871000181_20260831_000042.RET`. Se o
+> processo morrer entre o upload e o `UPDATE DataPublicacao`, a próxima tentativa
+> escreve por cima do mesmo objeto — e o cliente continua vendo **um** arquivo
+> com o NSA 42.
 
 ### 12.5 Checkpoint
 
@@ -3519,6 +3956,12 @@ _log.LogError("Falha ao parsear: {Linha}", linha);
 _log.LogError("Falha ao parsear arquivo {ArquivoId}, linha {Numero}, campo {Campo}.",
     arquivoId, numeroLinha, "ValorEfetivado");
 ```
+
+> **O fio condutor.** A linha 87 do arquivo do banco continua no
+> `StagingRetorno` como `LinhaOriginal`, com o CNPJ e a conta do cedente em texto
+> claro. Ela é prova na discussão com o banco e é dado pessoal ao mesmo tempo:
+> vale enquanto durar a retenção definida em 5.4, nunca aparece inteira em log
+> (13.2), e no golden file que virou teste ela entrou **anonimizada**.
 
 ### 13.3 Checkpoint
 
@@ -3658,6 +4101,7 @@ bug de produção.
 | `UX_IC_Pagamento_Arquivo` | `ItemConciliado` | Rede de segurança contra casamento duplo | **6.10** |
 | `IX_IC_Pendencias` | `ItemConciliado` | Fila de tratamento humano (filtrado) | **6.10** |
 | `IX_Outbox_Pendentes` | `Outbox` | Fila de publicação (filtrado) | **12.2** |
+| `IX_RetornoGerado_Remessa` | `RetornoGerado` | "Esta remessa já teve encerramento?" (filtrado) | **9.5** |
 | `IX_Mensagem_Pendentes` | `Fila.Mensagem` | Consumo da fila (filtrado) | **4.3** |
 | `UX_MapaOcorrencia_Vigente` | `MapaOcorrencia` | Tradução vigente por banco e layout | **7.2** |
 
@@ -4037,8 +4481,10 @@ quebrá-la. Serve exatamente para o tipo de bug que ninguém pensa em escrever c
 caso de teste. Propriedades naturais deste motor:
 
 - nenhum interno é consumido duas vezes;
-- a soma de conciliados, divergentes, só-internos, só-externos e duplicados é
-  igual ao total de itens produzidos;
+- toda linha externa aparece em exatamente um item do resultado;
+- a quantidade de itens produzidos é igual ao total de externos mais o total de
+  internos **em trânsito** que ninguém consumiu — é a formulação exata depois da
+  regra de 6.5, e um teste que ainda somasse todos os internos falharia;
 - reordenar as listas de entrada não muda a classificação de nenhum item — é o
   que prova que o desempate de 6.6 é mesmo estável.
 
@@ -4063,6 +4509,13 @@ duas implementações produzem as **mesmas cinco classificações**, inclusive
 | `UPDATE` no resultado da conciliação | Destrói o histórico; reversão fica inexplicável |
 | Casamento não idempotente | `at-least-once` duplica as pendências em silêncio |
 | Ignorar código de ocorrência desconhecido | Perde ocorrência sem deixar rastro; o sintoma vira "queda de taxa sem causa" |
+| Classificar ocorrência desconhecida como "só externo" | Mistura "não sei de quem é" com "não sei o que é"; a fila de pendências perde o sentido |
+| Candidatos ao casamento só entre os não conciliados | A devolução de D+40 não acha o original e vira "só externo" |
+| "Só interno" para pagamento já terminal | Uma pendência por pagamento por arquivo; a fila vira ruído e ninguém olha |
+| Mudar status sem tocar em `DataAtualizacao` | O pagamento muda de estado e nunca entra na janela do parcial |
+| Avançar a marca d'água no fechamento diário | Abre buraco: o que mudou depois do último parcial nunca é reportado |
+| Juntar lotes de remessas diferentes sem renumerar | Dois lotes com o mesmo número; o cliente rejeita o arquivo |
+| Agendador que testa `Minuto == 0` num laço de 30 s | Dispara duas vezes o mesmo ciclo; dois arquivos, dois NSA |
 | Contar prazo de negócio em dias corridos | Alerta de remessa presa no domingo; alerta que sempre grita deixa de ser lido |
 | Publicar antes de commitar | Cliente com arquivo que o sistema desconhece |
 | Ler-somar-gravar o NSA | Corrida silenciosa, sequencial duplicado |
@@ -4089,7 +4542,7 @@ duas implementações produzem as **mesmas cinco classificações**, inclusive
 | # | Entrega | Esforço | Valor |
 |---|---|---|---|
 | 1 | Tipos do domínio (2.7) + `MotorDeCasamento` + testes. Sem banco, sem fila | 1 dia | A regra fica correta e provada |
-| 2 | Staging + persistência do resultado, um worker síncrono | 2 dias | Já concilia de verdade |
+| 2 | Staging + persistência do resultado + aplicação do status (6.11), um worker síncrono | 2 dias | Já concilia de verdade, e o retorno já tem o que reportar |
 | 3 | Idempotência por hash + índice único + `DELETE` por arquivo | ½ dia | Reprocessar deixa de dar medo |
 | 4 | De/Para de ocorrências, com a regra do código desconhecido | 1 dia | Para de perder ocorrência em silêncio |
 | 5 | Separar geração, com `ReservadorNsa` atômico | 1 dia | Fim da corrida de NSA |
@@ -4178,7 +4631,7 @@ Em ordem alfabética, ignorando acentos e a formatação de código.
 | **Availability Group** | Réplica sincronizada do banco; permite leitura fora do primário |
 | **Bacen** | Banco Central do Brasil; opera a infraestrutura em que a liquidação acontece |
 | **`BackgroundService`** | Classe base do .NET para um processo em segundo plano com um laço próprio |
-| **Backoff exponencial** | Espera entre retentativas que dobra a cada falha, com teto e ruído aleatório |
+| **Backoff exponencial** | Espera entre retentativas que dobra a cada falha, com teto e **jitter** — o ruído aleatório que impede que mil mensagens que falharam juntas voltem juntas |
 | **Boleto** | Documento com código de barras que o pagador quita em qualquer banco |
 | **Broker** | Serviço dedicado a guardar e entregar mensagens (SQS, RabbitMQ, Kafka) |
 | **Buffer pool** | Memória RAM onde o SQL Server mantém as páginas mais usadas |
@@ -4188,9 +4641,10 @@ Em ordem alfabética, ignorando acentos e a formatação de código.
 | **Chave composta** | Casamento por `cliente + nosso número`, com desempate por data |
 | **Chave forte** | Identificador que as duas partes acordaram carregar; casamento 1:1 |
 | **Checksum** | Valor derivado dos dados que permite detectar perda ou alteração |
-| **Classificação de conciliação** | O veredicto do motor: 1 conciliado, 2 divergência, 3 só interno, 4 só externo, 5 duplicado, 6 revertido. Não confundir com `CodigoStatus` |
+| **Classificação de conciliação** | O veredicto gravado em `ItemConciliado`: 1 conciliado, 2 divergência, 3 só interno, 4 só externo, 5 duplicado, 6 revertido, 7 ocorrência desconhecida. O motor produz 1 a 5; a 6 vem do capítulo 14 e a 7 de 7.4. Não confundir com `CodigoStatus` |
 | **CNAB** | Centro Nacional de Automação Bancária; por extensão, o formato de arquivo de posição fixa |
 | **`CodigoStatus`** | O estado do pagamento: 1 a 8, na máquina de estados de 9.1. Não confundir com a classificação de conciliação |
+| **Conversor de CNAB** | Componente que recebe header, trailer e itens e devolve o arquivo montado; pressuposto deste guia e única peça que conhece o layout linha a linha |
 | **Compensação (saga)** | Lançamento que anula o efeito de um anterior, usado quando não é possível dar `ROLLBACK`. **É neste sentido que o guia usa a palavra** |
 | **Compensação bancária (*clearing*)** | Processo pelo qual os bancos acertam contas entre si antes da liquidação. Homônimo do anterior; **não** é o sentido usado neste guia |
 | **CPU-bound** | Etapa limitada por processamento, não por espera de I/O |
@@ -4201,6 +4655,7 @@ Em ordem alfabética, ignorando acentos e a formatação de código.
 | **Duplicata / título** | O documento de cobrança que o cedente emite contra o sacado e registra no banco |
 | **EndToEndId** | Identificador único que acompanha uma transação PIX de ponta a ponta |
 | **ERP** | Sistema de gestão do cedente; produz a remessa e consome o retorno |
+| **Encerramento de remessa** | Retorno de uma remessa inteira, disparado quando o último item vira terminal; o único que pode prometer completude |
 | **Escalonamento de lock** | Troca de milhares de locks de linha por um lock de tabela; para todo mundo |
 | **Estorno** | Devolução acordada entre as partes de um valor já liquidado |
 | **Fechamento diário** | Retorno em horário fixo com a foto do dia; pode conter pendências |
@@ -4236,6 +4691,7 @@ Em ordem alfabética, ignorando acentos e a formatação de código.
 | **Parcial** | Retorno incremental: só o que mudou desde a última janela |
 | **PIX** | Sistema de transferência instantânea do Bacen; funciona 24 horas por dia, todos os dias |
 | **RCSI** | *Read Committed Snapshot Isolation*; leitor não bloqueia escritor |
+| **Praça** | Localidade cujo calendário de feriados vale para aquele pagamento; `'BR'` é o nacional, e os municipais importam para boleto |
 | **`READPAST` / `UPDLOCK`** | Hints que fazem o consumidor pular linhas travadas e segurar as suas; é o que permite várias réplicas na mesma fila |
 | **Régua de prazo** | Regra que decide se um item "só interno" está dentro do prazo ou atrasado |
 | **Remessa** | Arquivo que o cliente envia ao banco com instruções |
@@ -4258,6 +4714,7 @@ Em ordem alfabética, ignorando acentos e a formatação de código.
 | **`tempdb`** | Banco de trabalho interno do SQL Server; crítico com RCSI ligado |
 | **Teste de propriedade** | Teste que declara uma invariante e deixa a biblioteca gerar massa aleatória para quebrá-la |
 | **`TimeProvider`** | Abstração de relógio do .NET 8+; substitui `DateTime.UtcNow` e torna a regra de tempo testável |
+| **Tolerância** | Política que decide quando uma diferença entre valor solicitado e efetivado é legítima (desconto, juros, tarifa) em vez de divergência |
 | **Totalizadores** | Quantidade de registros e somatório de valores gravados no trailer |
 | **TVP** | *Table-Valued Parameter*; envia uma tabela inteira num parâmetro |
 | **TxID** | Identificador da cobrança PIX, definido por quem a cria e devolvido em toda notificação daquela cobrança |
